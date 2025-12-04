@@ -1,18 +1,27 @@
 import json
 import requests
 import overpy
+import os
 from shapely.geometry import shape, box, Point, mapping, MultiPolygon
 from shapely.ops import unary_union
 
 country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson"
 populated_places = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_populated_places.geojson"
+borders_cache = "cache_borders.json"
+cities_cache = "cache_cities.json"
 
 def download_cities(bbox):
     south, west, north, east = bbox
+    if os.path.exists(cities_cache):
+        # load cities from the cache
+        with open(cities_cache, 'r') as f:
+            data = json.load(f)
+    else: 
+        data = requests.get(populated_places).json()
+        with open(cities_cache, 'w') as f:
+            json.dump(data, f)
 
-    # download Natural Earth populated places
     data = requests.get(populated_places).json()
-    
     bbox_poly = box(west, south, east, north)
     cities = []
 
@@ -47,7 +56,14 @@ def extract_coords(geom):
     return coords_list
 
 def download_world_borders():
-    data = requests.get(country_borders).json()
+    if os.path.exists(borders_cache):
+        # load cities from the cache
+        with open(borders_cache, 'r') as f:
+            data = json.load(f)
+    else: 
+        data = requests.get(country_borders).json()
+        with open(borders_cache, 'w') as f:
+            json.dump(data, f)
     countries = {}
 
     for feature in data["features"]:
