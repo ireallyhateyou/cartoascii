@@ -1,26 +1,35 @@
 import json
 import requests
 import overpy
-from shapely.geometry import shape, mapping, MultiPolygon
+from shapely.geometry import shape, box, Point, mapping, MultiPolygon
 from shapely.ops import unary_union
 
 country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson"
+populated_places = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_populated_places.geojson"
 
 def download_cities(bbox):
-    api = overpy.Overpass()
     south, west, north, east = bbox
-    query = f"""
-        [out:json][timeout:25];
-        node[place="city"]({south},{west},{north},{east});
-        out skel;
-    """
+
+    # download Natural Earth populated places
+    data = requests.get(populated_places).json()
     
-    result = api.query(query)
+    bbox_poly = box(west, south, east, north)
     cities = []
-    for node in result.nodes:
-        name = node.tags.get("name")
-        if name:
-            cities.append({ 'lat': float(node.lat), 'lon': float(node.lon), 'name': name})
+
+    for feature in data["features"]:
+        props = feature["properties"]
+        geom = shape(feature["geometry"])
+
+        if not geom.within(bbox_poly):
+            continue
+
+        cities.append({
+            "name": props.get("name") or props.get("NAME"),
+            "lat": geom.y,
+            "lon": geom.x,
+            "pop": props.get("pop_max") or props.get("POP_MAX"),
+            "rank": props.get("rank_max") or props.get("RANK_MAX"),
+        })
 
     return cities
 
@@ -62,3 +71,5 @@ def download_world_borders():
 
     countries_coords = {name: extract_coords(geom) for name, geom in countries.items()}
     return countries_coords
+
+print(download_cities((40.5, -74.5, 41.0, -73.5)))

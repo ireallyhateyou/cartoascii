@@ -19,6 +19,12 @@ def mercator_project(lat, lon):
     
     return x, y
 
+def mercator_unproject(y_proj):
+    # reverse of : y = math.log(math.tan((math.pi / 4) + (lat_rad / 2)))
+    y_proj_norm = math.radians(y_proj)
+    lat_rad = 2 * (math.atan(math.exp(y_proj_norm)) - (math.pi / 4))
+    return math.degrees(lat_rad)
+
 def draw_line(stdscr, x0, y0, x1, y1, char):
     # Bresenham's line algorithm
     # https://www.cs.drexel.edu/~popyack/Courses/CSP/Fa18/notes/08.3_MoreGraphics/Bresenham.html?CurrentSlide=2
@@ -59,7 +65,9 @@ def main(stdscr):
     curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK) 
     curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
     curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_BLACK) 
-
+    curses.init_pair(4, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    
     # load datas
     stdscr.addstr(0, 0, "Loading dataset... (this requires internet!!)")
     stdscr.refresh()
@@ -115,7 +123,7 @@ def main(stdscr):
         stdscr.addstr(0, 0, info, curses.color_pair(3))
         for name, polys, cx_map, cy_map in projected_map:
             # draw labels if zoomed
-            if zoom >= 5.0:
+            if zoom >= 1.5:
                 # centroid to screenspace
                 tx_center = cx_map - cam_x
                 ty_center = cy_map - cam_y 
