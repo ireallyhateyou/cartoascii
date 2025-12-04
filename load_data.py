@@ -1,9 +1,28 @@
 import json
 import requests
+import overpy
 from shapely.geometry import shape, mapping, MultiPolygon
 from shapely.ops import unary_union
 
 country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson"
+
+def download_cities(bbox):
+    api = overpy.Overpass()
+    south, west, north, east = bbox
+    query = f"""
+        [out:json][timeout:25];
+        node[place="city"]({south},{west},{north},{east});
+        out skel;
+    """
+    
+    result = api.query(query)
+    cities = []
+    for node in result.nodes:
+        name = node.tags.get("name")
+        if name:
+            cities.append({ 'lat': float(node.lat), 'lon': float(node.lon), 'name': name})
+
+    return cities
 
 def process_ring(ring):
         return [(lat, lon) for lon, lat in list(ring.coords)]
