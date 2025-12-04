@@ -1,60 +1,14 @@
 import curses
 import math
-import load_data
 import time
+import threading
+from utils import *
+from load_data import *
 
-mercator_const = 85.051129
-
-def mercator_project(lat, lon):
-    # clip
-    if lat > mercator_const: lat = mercator_const
-    if lat < -mercator_const: lat = -mercator_const
-
-    x = lon
-    
-    # mercator formula
-    lat_rad = math.radians(lat)
-    y = math.log(math.tan((math.pi / 4) + (lat_rad / 2)))
-    y = math.degrees(y)
-    
-    return x, y
-
-def mercator_unproject(y_proj):
-    # reverse of : y = math.log(math.tan((math.pi / 4) + (lat_rad / 2)))
-    y_proj_norm = math.radians(y_proj)
-    lat_rad = 2 * (math.atan(math.exp(y_proj_norm)) - (math.pi / 4))
-    return math.degrees(lat_rad)
-
-def draw_line(stdscr, x0, y0, x1, y1, char):
-    # Bresenham's line algorithm
-    # https://www.cs.drexel.edu/~popyack/Courses/CSP/Fa18/notes/08.3_MoreGraphics/Bresenham.html?CurrentSlide=2
-    height, width = stdscr.getmaxyx()
-
-    # dont go off boundaries
-    if (x0 < 0 and x1 < 0) or (x0 >= width and x1 >= width): return
-    if (y0 < 0 and y1 < 0) or (y0 >= height and y1 >= height): return
-
-    dx = abs(x1 - x0)
-    dy = abs(y1 - y0)
-    sx = 1 if x0 < x1 else -1
-    sy = 1 if y0 < y1 else -1
-    err = dx - dy
-
-    while True:
-        if 0 <= x0 < width and 0 <= y0 < height:
-            try:
-                stdscr.addch(int(y0), int(x0), char)
-            except curses.error:
-                pass
-        if x0 == x1 and y0 == y1:
-            break
-        e2 = 2 * err
-        if e2 > -dy:
-            err -= dy
-            x0 += sx
-        if e2 < dx:
-            err += dx
-            y0 += sy
+def fetch_and_cache(bbox, cache):
+    new_cities = download_cities(bbox)
+    cache['bbox'] = bbox
+    cache['cities'] = new_cities
 
 def main(stdscr):
     # set cursors up
@@ -73,7 +27,7 @@ def main(stdscr):
     stdscr.refresh()
     
     try:
-        countries = load_data.download_world_borders()
+        countries = download_world_borders()
     except Exception as e:
         stdscr.addstr(2, 0, f"error loading data: {e}")
         stdscr.addstr(3, 0, "Please press q to quit :(")
@@ -111,12 +65,39 @@ def main(stdscr):
     cam_y = 0.0
     zoom = 1.0
     aspect_ratio = 2.0 
+    city_cache = {'bbox': None, 'cities': []} 
+    fetch_thread = None
 
     running = True
     while running:
         stdscr.clear()
         height, width = stdscr.getmaxyx()
         cx, cy = width // 2, height // 2
+        # fetch cities at zoom level
+        if zoom >= 3.0:
+            try:
+                # figure out the bounding box in lat/long
+                lon_span = width / (zoom * aspect_ratio)
+                proj_lat_span = height / zoom
+                lon_min = cam_x - lon_span / 2
+                lon_max = cam_x + lon_span / 2
+                proj_lat_min = cam_y - proj_lat_span / 2
+                proj_lat_max = cam_y + proj_lat_span / 2
+                
+                lat_min = mercator_unproject(proj_lat_min)
+                lat_max = mercator_unproject(proj_lat_max)
+
+                # create a bounding box from this
+                bbox = (lat_min, lon_min, lat_max, lon_max)
+                bbox_changed = city_cache['bbox'] != bbox
+
+                # make threads that download cities
+                if bbox_changed and (fetch_thread is None or not fetch_thread.is_alive()):
+                    fetch_thread = threading.Thread(target=fetch_and_cache, args=(bbox, city_cache))
+                    fetch_thread.start()
+
+            except Exception:
+                pass # ignore errors #thuglife
 
         # draw hud and map
         info = f"Pos: {cam_x:.1f}, {cam_y:.1f} | Zoom: {zoom:.1f} | Arr: Move | +/-: Zoom | q: Quit"
@@ -161,12 +142,33 @@ def main(stdscr):
                     p2 = screen_points[0]
                     draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], ord('#') | curses.color_pair(1))
 
+        # draw cities when there are cities to draw
+        cities_to_draw = city_cache['cities'] if zoom >= 3.0 else []
+        if cities_to_draw:
+            city_point_color = curses.color_pair(4) if curses.COLORS >= 5 else curses.color_pair(1)
+            city_name_color = curses.color_pair(5) if curses.COLORS >= 5 else curses.color_pair(2)
+            for city in cities_to_draw:
+                lat, lon = city['lat'], city['lon']
+                name = city['name']
+                
+                # project coords to lat, long
+                tx, ty = mercator_project(lat, lon)
+                
+                # convert to screen coordinates
+                sx = ((tx - cam_x) * zoom * aspect_ratio) + cx
+                sy = (-(ty - cam_y) * zoom) + cy
+                
+                # print cities
+                if 0 <= int(sy) < height and 0 <= int(sx) < width:
+                    stdscr.addch(int(sy), int(sx), ord('*') | city_point_color)
+                    stdscr.addstr(int(sy), min(width - 1, int(sx) + 1), name, city_name_color)
+
         # handle input
         try:
             key = stdscr.getch()
         except:
             key = -1
-
+        ## process input
         if key == ord('q'):
             running = False
         elif key == curses.KEY_RIGHT:
