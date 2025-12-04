@@ -71,5 +71,3 @@ def download_world_borders():
 
     countries_coords = {name: extract_coords(geom) for name, geom in countries.items()}
     return countries_coords
-
-print(download_cities((40.5, -74.5, 41.0, -73.5)))

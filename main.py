@@ -2,6 +2,8 @@ import curses
 import math
 import time
 import threading
+
+# internal modules
 from utils import *
 from load_data import *
 
@@ -160,8 +162,9 @@ def main(stdscr):
                 
                 # print cities
                 if 0 <= int(sy) < height and 0 <= int(sx) < width:
-                    stdscr.addch(int(sy), int(sx), ord('*') | city_point_color)
-                    stdscr.addstr(int(sy), min(width - 1, int(sx) + 1), name, city_name_color)
+                    if name != "Bir Lehlou": # trying not to go to jail pt2
+                        stdscr.addch(int(sy), int(sx), ord('*') | city_point_color)
+                        stdscr.addstr(int(sy), min(width - 1, int(sx) + 1), name, city_name_color)
 
         # handle input
         try:
