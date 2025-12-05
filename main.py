@@ -107,6 +107,24 @@ def main(stdscr):
 
                 # create a bounding box from this
                 bbox = (lat_min, lon_min, lat_max, lon_max)
+                last_bbox = city_cache['bbox']
+                
+                should_fetch = False
+                if not last_bbox:
+                    should_fetch = True
+                # check for movement between previous and current bbox
+                elif any(abs(bbox[i] - last_bbox[i]) > 0.05 for i in range(4)): 
+                    should_fetch = True
+                
+                # launch thread if we should fetch a city
+                if should_fetch and (fetch_cities_thread is None or not fetch_cities_thread.is_alive()):
+                    if fetch_cities_thread and fetch_cities_thread.is_alive():
+                        # pass if already alive
+                        pass
+                    else:
+                        fetch_cities_thread = threading.Thread(target=fetch_city_cache, args=(bbox, city_cache))
+                        fetch_cities_thread.daemon = True
+                        fetch_cities_thread.start()
             except Exception:
                 pass # ignore errors #thuglife
 

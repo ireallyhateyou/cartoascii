@@ -7,7 +7,7 @@ def mercator_project(lat, lon):
     # clip
     if lat > mercator_const: lat = mercator_const
     if lat < -mercator_const: lat = -mercator_const
-
+    
     x = lon
     
     # mercator formula

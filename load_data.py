@@ -106,7 +106,6 @@ def download_cities(bbox):
         with open(cities_cache, 'w') as f:
             json.dump(data, f)
 
-    data = requests.get(populated_places).json()
     bbox_poly = box(west, south, east, north)
     cities = []
 
