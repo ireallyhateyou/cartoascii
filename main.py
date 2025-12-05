@@ -196,7 +196,7 @@ def main(stdscr):
                     continue
                 
                 # highlight important roads
-                char = ord('.')
+                char = ord('.') if zoom >= 10 else ord(' ')
                 if road['type'] in ['Major Highway', 'Secondary Highway', 'State Highway']:
                     char = ord('#')
                     
@@ -224,6 +224,8 @@ def main(stdscr):
                         stdscr.addch(int(sy), int(sx), ord('*') | city_point_color)
                         stdscr.addstr(int(sy), min(width - 1, int(sx) + 1), name, city_name_color)
 
+        # TODO: show city detail after zoom level >= 100 
+        
         # handle input
         try:
             key = stdscr.getch()
