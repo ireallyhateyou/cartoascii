@@ -33,6 +33,7 @@ def main(stdscr):
     
     try:
         countries = download_world_borders()
+        roads_data = download_roads()
     except Exception as e:
         stdscr.addstr(2, 0, f"error loading data: {e}")
         stdscr.addstr(3, 0, "Please press q to quit :(")
@@ -142,7 +143,18 @@ def main(stdscr):
                     p1 = screen_points[-1]
                     p2 = screen_points[0]
                     draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], ord('#') | curses.color_pair(1))
-                    
+
+        # draw roads     
+        if zoom >= 22.0 and roads_data:
+            road_color = curses.color_pair(6)
+            for road in roads_data:
+                # highlight major roads
+                char = ord('.')
+                if road['type'] in ['Major Highway', 'Secondary Highway', 'State Highway']:
+                    char = ord('#')
+                # draw road
+                draw_polyline(stdscr, road['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, char | road_color)
+
         # draw cities when there are cities to draw
         cities_to_draw = city_cache['cities'] if zoom >= 3.0 else []
         if cities_to_draw:
