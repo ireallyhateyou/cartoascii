@@ -13,7 +13,7 @@ def fetch_city_cache(bbox, cache):
     new_cities = download_cities(bbox)
     cache['bbox'] = bbox
     cache['cities'] = new_cities
-
+            
 def main(stdscr):
     # set cursors up
     curses.curs_set(0) 
@@ -80,6 +80,17 @@ def main(stdscr):
         stdscr.clear()
         height, width = stdscr.getmaxyx()
         cx, cy = width // 2, height // 2
+        
+        # calculate the view's projected bounds (mx_min, my_min, etc.) ONCE
+        lon_span = width / (zoom * aspect_ratio)
+        proj_lat_span = height / zoom
+        
+        # projected bounds of the screen/view
+        view_mx_min = cam_x - lon_span / 2
+        view_mx_max = cam_x + lon_span / 2
+        view_my_min = cam_y - proj_lat_span / 2
+        view_my_max = cam_y + proj_lat_span / 2
+
         # fetch cities at zoom level
         if zoom >= 3.0:
             try:
@@ -148,13 +159,21 @@ def main(stdscr):
         if zoom >= 22.0 and roads_data:
             road_color = curses.color_pair(6)
             for road in roads_data:
-                # highlight major roads
+                # get bbox
+                min_mx, min_my, max_mx, max_my = road['bbox'] 
+                
+                # skip if it doesnt match our bbox
+                if max_mx < view_mx_min or min_mx > view_mx_max or \
+                   max_my < view_my_min or min_my > view_my_max:
+                    continue
+                
+                # highlight important roads
                 char = ord('.')
                 if road['type'] in ['Major Highway', 'Secondary Highway', 'State Highway']:
                     char = ord('#')
-                # draw road
-                draw_polyline(stdscr, road['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, char | road_color)
-
+                    
+                draw_projected_polyline(stdscr, road['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, char | road_color)
+            
         # draw cities when there are cities to draw
         cities_to_draw = city_cache['cities'] if zoom >= 3.0 else []
         if cities_to_draw:

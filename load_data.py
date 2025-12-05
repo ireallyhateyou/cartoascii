@@ -10,11 +10,13 @@ import pandas as pd
 import tempfile
 import zipfile
 import io 
+from utils import mercator_project
 
 # download urls
 country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson"
 populated_places = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_populated_places.geojson"
 roads_zip = "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_roads.zip"
+
 # cache files
 borders_cache = "cache_borders.json"
 cities_cache = "cache_cities.json"
@@ -24,6 +26,7 @@ def download_roads():
     # load from cache
     if os.path.exists(roads_cache):
         print("Loading Natural Earth Roads from cache...")
+        # NOTE: Loading from cache must handle the new structure
         with open(roads_cache, 'r') as f:
             return json.load(f)
 
@@ -53,15 +56,38 @@ def download_roads():
     for index, row in gdf.iterrows():
         geom = row.geometry
         road_type = row.get("type", "other") 
-        coords_list = []
+        coords_list_lon_lat = []
         
         if geom.geom_type == 'LineString':
-            coords_list = list(geom.coords)
+            coords_list_lon_lat = list(geom.coords)
         elif geom.geom_type == 'MultiLineString':
             for line in geom.geoms:
-                coords_list.extend(list(line.coords))
-        if coords_list:
-            roads.append({'coords': coords_list, 'type': road_type})
+                coords_list_lon_lat.extend(list(line.coords))
+        
+        if coords_list_lon_lat:
+            # --- START OPTIMIZATION 1 & 2: Project and calculate AABB ---
+            
+            # 1. Project to mx/my
+            projected_coords = []
+            min_mx, max_mx = float('inf'), float('-inf')
+            min_my, max_my = float('inf'), float('-inf')
+            
+            for lon, lat in coords_list_lon_lat:
+                mx, my = mercator_project(lat, lon)
+                projected_coords.append((mx, my))
+                
+                # 2. Update AABB
+                min_mx = min(min_mx, mx)
+                max_mx = max(max_mx, mx)
+                min_my = min(min_my, my)
+                max_my = max(max_my, my)
+
+            roads.append({
+                'coords': projected_coords, 
+                'type': road_type,
+                'bbox': (min_mx, min_my, max_mx, max_my) # Store AABB
+            })
+            # --- END OPTIMIZATION 1 & 2 ---
 
     # save it to a cache :D
     with open(roads_cache, 'w') as f:

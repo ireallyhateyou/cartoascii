@@ -54,26 +54,26 @@ def draw_line(stdscr, x0, y0, x1, y1, char):
             err += dx
             y0 += sy
 
-
-def draw_polyline(stdscr, coords, cam_x, cam_y, zoom, aspect, width, height, char):
+def draw_projected_polyline(stdscr, coords_mx_my, cam_x, cam_y, zoom, aspect_ratio, width, height, char_color):
     screen_points = []
-    # Project all points first
-    for lon, lat in coords:
-        # Note: mercator_project expects (lat, lon)
-        mx, my = mercator_project(lat, lon) 
-        
-        # Translate based on camera and zoom
+
+    # project to screnspace
+    for mx, my in coords_mx_my:
+        # transalte based on camera
         tx = mx - cam_x
         ty = my - cam_y
-        
-        # To screen space
-        sx = (tx * zoom * aspect) + width // 2
+        # to screen space
+        sx = (tx * zoom * aspect_ratio) + width // 2
         sy = (-ty * zoom) + height // 2
         
         screen_points.append((int(sx), int(sy)))
 
-    # Draw lines between points
+    # draw lines and clippings
     for i in range(len(screen_points) - 1):
-        x1, y1 = screen_points[i]
-        x2, y2 = screen_points[i + 1]
-        draw_line(stdscr, x1, y1, x2, y2, char)
+        p1 = screen_points[i]
+        p2 = screen_points[i+1]
+        
+        # bounds check
+        if (0 <= p1[0] < width and 0 <= p1[1] < height) or \
+           (0 <= p2[0] < width and 0 <= p2[1] < height):
+            draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char_color)
