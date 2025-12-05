@@ -25,8 +25,6 @@ roads_cache = "cache_roads.json"
 def download_roads():
     # load from cache
     if os.path.exists(roads_cache):
-        print("Loading Natural Earth Roads from cache...")
-        # NOTE: Loading from cache must handle the new structure
         with open(roads_cache, 'r') as f:
             return json.load(f)
 
@@ -65,9 +63,7 @@ def download_roads():
                 coords_list_lon_lat.extend(list(line.coords))
         
         if coords_list_lon_lat:
-            # --- START OPTIMIZATION 1 & 2: Project and calculate AABB ---
-            
-            # 1. Project to mx/my
+            # projects mx/my
             projected_coords = []
             min_mx, max_mx = float('inf'), float('-inf')
             min_my, max_my = float('inf'), float('-inf')
@@ -75,8 +71,6 @@ def download_roads():
             for lon, lat in coords_list_lon_lat:
                 mx, my = mercator_project(lat, lon)
                 projected_coords.append((mx, my))
-                
-                # 2. Update AABB
                 min_mx = min(min_mx, mx)
                 max_mx = max(max_mx, mx)
                 min_my = min(min_my, my)
@@ -85,9 +79,8 @@ def download_roads():
             roads.append({
                 'coords': projected_coords, 
                 'type': road_type,
-                'bbox': (min_mx, min_my, max_mx, max_my) # Store AABB
+                'bbox': (min_mx, min_my, max_mx, max_my) 
             })
-            # --- END OPTIMIZATION 1 & 2 ---
 
     # save it to a cache :D
     with open(roads_cache, 'w') as f:

@@ -165,16 +165,26 @@ def main(stdscr):
                 for i in range(len(screen_points) - 1):
                     p1 = screen_points[i]
                     p2 = screen_points[i+1]
-                    draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], ord('#') | curses.color_pair(1))
+                    
+                    # calcualte delta (destination)
+                    dx = p2[0] - p1[0]
+                    dy = p2[1] - p1[1]
+                    
+                    char = get_line_char(dx, dy) 
+                    draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | curses.color_pair(1))
                 
                 # close loop
                 if screen_points:
                     p1 = screen_points[-1]
                     p2 = screen_points[0]
-                    draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], ord('#') | curses.color_pair(1))
+                    
+                    dx = p2[0] - p1[0]
+                    dy = p2[1] - p1[1]
+                    char = get_line_char(dx, dy)
+                    draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | curses.color_pair(1))
 
         # draw roads     
-        if zoom >= 22.0 and roads_data:
+        if zoom >= 5.0 and roads_data:
             road_color = curses.color_pair(6)
             for road in roads_data:
                 # get bbox

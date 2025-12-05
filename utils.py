@@ -7,7 +7,7 @@ def mercator_project(lat, lon):
     # clip
     if lat > mercator_const: lat = mercator_const
     if lat < -mercator_const: lat = -mercator_const
-    
+
     x = lon
     
     # mercator formula
@@ -22,6 +22,23 @@ def mercator_unproject(y_proj):
     y_proj_norm = math.radians(y_proj)
     lat_rad = 2 * (math.atan(math.exp(y_proj_norm)) - (math.pi / 4))
     return math.degrees(lat_rad)
+
+def get_line_char(dx, dy):
+    abs_dx = abs(dx)
+    abs_dy = abs(dy)
+
+    # pick ascii character
+    if abs_dx > abs_dy * 3:
+        return ord('-')
+    elif abs_dy > abs_dx * 3:
+        return ord('|')
+    elif abs_dx > abs_dy / 3 and abs_dy > abs_dx / 3:
+        if (dx > 0 and dy > 0) or (dx < 0 and dy < 0):
+            return ord('\\') 
+        else:
+            return ord('/')
+    else:
+        return ord('#')
 
 def draw_line(stdscr, x0, y0, x1, y1, char):
     # Bresenham's line algorithm
