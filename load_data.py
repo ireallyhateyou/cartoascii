@@ -2,6 +2,7 @@ import json
 import requests
 import overpy
 import os
+from osmnx import features
 from shapely.geometry import shape, box, Point, mapping, MultiPolygon
 from shapely.ops import unary_union
 
@@ -9,6 +10,32 @@ country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_1
 populated_places = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_populated_places.geojson"
 borders_cache = "cache_borders.json"
 cities_cache = "cache_cities.json"
+# tags for OSM layers
+roads_tags = { "highway": True, "name": True, 
+        "ref": True, "maxspeed": True,
+        "oneway": True, }
+
+buildings_tags = { "building": True, "name": True,
+            "height": True, }
+
+landmarks_tags = { "tourism": True, "historic": True,
+            "amenity": True, }
+
+def download_osm_layers(bbox):
+    south, west, north, east = bbox 
+    bbox_ox = (west, south, east, north) # flip direction
+    
+    roads = features.features_from_bbox(bbox=bbox_ox, tags=roads_tags)
+    # filter out only the columns that matter
+    roads = roads[["geometry", "highway", "name", "oneway", "ref", "maxspeed"]].fillna("")
+
+    landmarks = features.features_from_bbox(bbox=bbox_ox, tags=landmarks_tags)
+    landmarks = landmarks[["geometry", "tourism", "historic", "name"]].fillna("")
+
+    buildings = features.features_from_bbox(bbox=bbox_ox, tags=buildings_tags)
+    buildings = buildings[["geometry", "building", "name", "height"]].fillna("")
+
+    return { 'roads': roads, 'landmarks': landmarks, 'buildings': buildings }
 
 def download_cities(bbox):
     south, west, north, east = bbox

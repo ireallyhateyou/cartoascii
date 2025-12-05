@@ -1,2 +1,3 @@
 overpy
+osmnx
 shapely
