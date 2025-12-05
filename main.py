@@ -2,12 +2,14 @@ import curses
 import math
 import time
 import threading
+import pandas as pd
 
 # internal modules
 from utils import *
 from load_data import *
 
-def fetch_and_cache(bbox, cache):
+# fetch city layers + cache
+def fetch_city_cache(bbox, cache):
     new_cities = download_cities(bbox)
     cache['bbox'] = bbox
     cache['cities'] = new_cities
@@ -23,6 +25,7 @@ def main(stdscr):
     curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_BLACK) 
     curses.init_pair(4, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    curses.init_pair(6, curses.COLOR_BLUE, curses.COLOR_BLACK)
     
     # load datas
     stdscr.addstr(0, 0, "Loading dataset... (this requires internet!!)")
@@ -68,7 +71,8 @@ def main(stdscr):
     zoom = 1.0
     aspect_ratio = 2.0 
     city_cache = {'bbox': None, 'cities': []} 
-    fetch_thread = None
+    # threads
+    fetch_cities_thread = None
 
     running = True
     while running:
@@ -91,19 +95,14 @@ def main(stdscr):
 
                 # create a bounding box from this
                 bbox = (lat_min, lon_min, lat_max, lon_max)
-                bbox_changed = city_cache['bbox'] != bbox
-
-                # make threads that download cities
-                if bbox_changed and (fetch_thread is None or not fetch_thread.is_alive()):
-                    fetch_thread = threading.Thread(target=fetch_and_cache, args=(bbox, city_cache))
-                    fetch_thread.start()
-
             except Exception:
                 pass # ignore errors #thuglife
 
-        # draw hud and map
+        # draw hud
         info = f"Pos: {cam_x:.1f}, {cam_y:.1f} | Zoom: {zoom:.1f} | Arr: Move | +/-: Zoom | q: Quit"
         stdscr.addstr(0, 0, info, curses.color_pair(3))
+
+        # draw map
         for name, polys, cx_map, cy_map in projected_map:
             # draw labels if zoomed
             if zoom >= 1.5:
@@ -143,7 +142,7 @@ def main(stdscr):
                     p1 = screen_points[-1]
                     p2 = screen_points[0]
                     draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], ord('#') | curses.color_pair(1))
-
+                    
         # draw cities when there are cities to draw
         cities_to_draw = city_cache['cities'] if zoom >= 3.0 else []
         if cities_to_draw:

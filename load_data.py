@@ -5,37 +5,69 @@ import os
 from osmnx import features
 from shapely.geometry import shape, box, Point, mapping, MultiPolygon
 from shapely.ops import unary_union
+import geopandas as gpd
+import pandas as pd
+import tempfile
+import zipfile
+import io 
 
+# download urls
 country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson"
 populated_places = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_populated_places.geojson"
+roads_zip = "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_roads.zip"
+# cache files
 borders_cache = "cache_borders.json"
 cities_cache = "cache_cities.json"
-# tags for OSM layers
-roads_tags = { "highway": True, "name": True, 
-        "ref": True, "maxspeed": True,
-        "oneway": True, }
+roads_cache = "cache_roads.json"
 
-buildings_tags = { "building": True, "name": True,
-            "height": True, }
+def download_roads():
+    # load from cache
+    if os.path.exists(roads_cache):
+        print("Loading Natural Earth Roads from cache...")
+        with open(roads_cache, 'r') as f:
+            return json.load(f)
 
-landmarks_tags = { "tourism": True, "historic": True,
-            "amenity": True, }
+    # if not, download
+    try:
+        response = requests.get(roads_zip, timeout=60)
+        response.raise_for_status() 
+    except Exception as e:
+        print(f"error {e}")
+        return []
 
-def download_osm_layers(bbox):
-    south, west, north, east = bbox 
-    bbox_ox = (west, south, east, north) # flip direction
-    
-    roads = features.features_from_bbox(bbox=bbox_ox, tags=roads_tags)
-    # filter out only the columns that matter
-    roads = roads[["geometry", "highway", "name", "oneway", "ref", "maxspeed"]].fillna("")
+    # temporary open the zip and extract files
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_bytes = io.BytesIO(response.content)
+        with zipfile.ZipFile(zip_bytes, 'r') as zf:
+            for filename in zf.namelist():
+                if filename.startswith('ne_10m_roads.'):
+                    zf.extract(filename, path=tmpdir)
+        local_shp_path = os.path.join(tmpdir, 'ne_10m_roads.shp')
+        try:
+            gdf = gpd.read_file(local_shp_path) 
+        except Exception as e:
+            print(f"error readign file: {e}")
+            return []
 
-    landmarks = features.features_from_bbox(bbox=bbox_ox, tags=landmarks_tags)
-    landmarks = landmarks[["geometry", "tourism", "historic", "name"]].fillna("")
+    roads = []
+    for index, row in gdf.iterrows():
+        geom = row.geometry
+        road_type = row.get("type", "other") 
+        coords_list = []
+        
+        if geom.geom_type == 'LineString':
+            coords_list = list(geom.coords)
+        elif geom.geom_type == 'MultiLineString':
+            for line in geom.geoms:
+                coords_list.extend(list(line.coords))
+        if coords_list:
+            roads.append({'coords': coords_list, 'type': road_type})
 
-    buildings = features.features_from_bbox(bbox=bbox_ox, tags=buildings_tags)
-    buildings = buildings[["geometry", "building", "name", "height"]].fillna("")
-
-    return { 'roads': roads, 'landmarks': landmarks, 'buildings': buildings }
+    # save it to a cache :D
+    with open(roads_cache, 'w') as f:
+        json.dump(roads, f)
+            
+    return roads
 
 def download_cities(bbox):
     south, west, north, east = bbox
