@@ -10,7 +10,7 @@ import pandas as pd
 import tempfile
 import zipfile
 import io 
-from utils import mercator_project
+from drawing_utils import mercator_project
 
 # download urls
 country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson"
@@ -21,6 +21,62 @@ roads_zip = "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_roads.zip
 borders_cache = "cache_borders.json"
 cities_cache = "cache_cities.json"
 roads_cache = "cache_roads.json"
+
+# async is good?
+# TODO: put this in another file
+class mapData:
+    def __init__(self):
+        self.countries_coords = None 
+        self.roads_data = None
+        self.projected_map_full = None
+        self.data_loaded = False
+        self.error = None
+
+# data_obj is an instance of MapData
+def load_and_project_map(data_obj): 
+    try:
+        data_obj.countries_coords = download_world_borders()
+        data_obj.roads_data = download_roads()
+        
+        # project coordinates
+        projected_map = []
+        for name, parts in data_obj.countries_coords.items():
+            country_polys = []
+            all_mx, all_my, count = 0.0, 0.0, 0
+            mx_min, my_min = float('inf'), float('inf')
+            mx_max, my_max = float('-inf'), float('-inf')
+
+            for part in parts:
+                poly_points = []
+                for lat, lon in part:
+                    mx, my = mercator_project(lat, lon)
+                    poly_points.append((mx, my))
+                    
+                    # centroid calculation
+                    all_mx += mx
+                    all_my += my
+                    count += 1
+                    mx_min = min(mx_min, mx)
+                    my_min = min(my_min, my)
+                    mx_max = max(mx_max, mx)
+                    my_max = max(my_max, my)
+                    
+                country_polys.append(poly_points)
+            
+            centroid_x = all_mx / count if count > 0 else 0.0
+            centroid_y = all_my / count if count > 0 else 0.0
+            projected_map.append((name, country_polys, centroid_x, centroid_y, mx_min, my_min, mx_max, my_max))
+
+        data_obj.projected_map_full = projected_map
+        data_obj.data_loaded = True
+    except Exception as e:
+        data_obj.error = f"Error loading map data: {e}"
+
+# fetch city layers + cache
+def fetch_city_cache(bbox, cache):
+    new_cities = download_cities(bbox)
+    cache['bbox'] = bbox
+    cache['cities'] = new_cities
 
 def download_roads():
     # load from cache

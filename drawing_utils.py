@@ -120,3 +120,39 @@ def simplify_polyline(coords_mx_my, tolerance_mx_my):
         simplified.append(coords_mx_my[-1])
         
     return simplified
+
+
+# simplifcaiton
+def draw_country_poly(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, width, height, color, simplify_tolerance=0.0):
+    coords_to_draw = poly_coords
+    # tolerance
+    if simplify_tolerance > 0.0:
+        coords_to_draw = simplify_polyline(poly_coords, simplify_tolerance)
+        
+    screen_points = []
+    cx, cy = width // 2, height // 2
+    for mx, my in coords_to_draw:
+        tx = mx - cam_x
+        ty = my - cam_y
+        sx = (tx * zoom * aspect_ratio) + cx
+        sy = (-ty * zoom) + cy
+        screen_points.append((int(sx), int(sy)))
+        
+    # draw lines
+    for i in range(len(screen_points) - 1):
+        p1 = screen_points[i]
+        p2 = screen_points[i+1]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        char = get_line_char(dx, dy)
+        
+        draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | color)
+    
+    # close loop
+    if screen_points:
+        p1 = screen_points[-1]
+        p2 = screen_points[0]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        char = get_line_char(dx, dy)
+        draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | color)
