@@ -13,13 +13,15 @@ def fetch_city_cache(bbox, cache):
     new_cities = download_cities(bbox)
     cache['bbox'] = bbox
     cache['cities'] = new_cities
-            
+
 def main(stdscr):
     # set cursors up
     curses.curs_set(0) 
     stdscr.nodelay(True) 
     stdscr.timeout(100)
     curses.start_color()
+
+    ## colours
     curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK) 
     curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
     curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_BLACK) 
@@ -58,12 +60,10 @@ def main(stdscr):
                 all_mx += mx
                 all_my += my
                 count += 1
-                
             country_polys.append(poly_points)
         
         centroid_x = all_mx / count if count > 0 else 0.0
         centroid_y = all_my / count if count > 0 else 0.0
-        
         projected_map.append((name, country_polys, centroid_x, centroid_y))
 
     # camera and aspect ratio

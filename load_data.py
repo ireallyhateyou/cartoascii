@@ -55,13 +55,13 @@ def download_roads():
         geom = row.geometry
         road_type = row.get("type", "other") 
         coords_list_lon_lat = []
-        
+
         if geom.geom_type == 'LineString':
             coords_list_lon_lat = list(geom.coords)
         elif geom.geom_type == 'MultiLineString':
             for line in geom.geoms:
                 coords_list_lon_lat.extend(list(line.coords))
-        
+ 
         if coords_list_lon_lat:
             # projects mx/my
             projected_coords = []
