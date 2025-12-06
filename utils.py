@@ -111,7 +111,7 @@ def simplify_polyline(coords_mx_my, tolerance_mx_my):
         dy = current_point[1] - last_point[1]
         dist_sq = dx*dx + dy*dy
         
-        # Keep the point if it's far enough from the last point
+        # keep the point if it's far enough from the last point
         if dist_sq >= tolerance_sq:
             simplified.append(current_point)
             last_point = current_point

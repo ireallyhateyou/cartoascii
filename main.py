@@ -18,7 +18,8 @@ class mapData:
         self.data_loaded = False
         self.error = None
 
-def load_and_project_map(data_obj): # data_obj is an instance of our class
+# data_obj is an instance of MapData
+def load_and_project_map(data_obj): 
     try:
         data_obj.countries_coords = download_world_borders()
         data_obj.roads_data = download_roads()
@@ -28,29 +29,34 @@ def load_and_project_map(data_obj): # data_obj is an instance of our class
         for name, parts in data_obj.countries_coords.items():
             country_polys = []
             all_mx, all_my, count = 0.0, 0.0, 0
-            
+            mx_min, my_min = float('inf'), float('inf')
+            mx_max, my_max = float('-inf'), float('-inf')
+
             for part in parts:
                 poly_points = []
                 for lat, lon in part:
                     mx, my = mercator_project(lat, lon)
                     poly_points.append((mx, my))
+                    
                     # centroid calculation
                     all_mx += mx
                     all_my += my
                     count += 1
+                    mx_min = min(mx_min, mx)
+                    my_min = min(my_min, my)
+                    mx_max = max(mx_max, mx)
+                    my_max = max(my_max, my)
                     
                 country_polys.append(poly_points)
             
             centroid_x = all_mx / count if count > 0 else 0.0
             centroid_y = all_my / count if count > 0 else 0.0
-            
-            projected_map.append((name, country_polys, centroid_x, centroid_y))
-        
+            projected_map.append((name, country_polys, centroid_x, centroid_y, mx_min, my_min, mx_max, my_max))
+
         data_obj.projected_map_full = projected_map
         data_obj.data_loaded = True
-        
     except Exception as e:
-        data_obj.error = f"error loading map: {e}"
+        data_obj.error = f"Error loading map data: {e}"
 
 # simplifcaiton
 def draw_country_poly(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, width, height, color, simplify_tolerance=0.0):
@@ -135,6 +141,10 @@ def main(stdscr):
         height, width = stdscr.getmaxyx()
         cx, cy = width // 2, height // 2
         
+        if map_data.data_loaded and not projected_map:
+            projected_map = map_data.projected_map_full
+            roads_data = map_data.roads_data
+
         # draw status bar if the data is not ready
         if not map_data.data_loaded:
             stdscr.addstr(1, 0, "processing high-res borders...", curses.color_pair(3))
@@ -146,13 +156,11 @@ def main(stdscr):
             stdscr.addstr(0, 0, info, curses.color_pair(3))
 
         if map_data.data_loaded:
-            # ptu data in variables, and calculate bounds
-            projected_map = map_data.projected_map_full
-            roads_data = map_data.roads_data
+            # calculate the view's projected bounds (mx_min, my_min, etc.) ONCE
             lon_span = width / (zoom * aspect_ratio)
             proj_lat_span = height / zoom
             
-            # projected bounds on the screen
+            # projected bounds of the screen/view
             view_mx_min = cam_x - lon_span / 2
             view_mx_max = cam_x + lon_span / 2
             view_my_min = cam_y - proj_lat_span / 2
@@ -200,24 +208,33 @@ def main(stdscr):
         stdscr.addstr(0, 0, info, curses.color_pair(3))
 
         simplify_tolerance_mx_my = 0.0 
-        if zoom < 5.0: simplify_tolerance_mx_my = 0.05
+        if zoom < 5.0:
+            simplify_tolerance_mx_my = 0.05
 
         # draw map
-        for name, polys, cx_map, cy_map in projected_map:
+        for name, polys, cx_map, cy_map, bbox_mx_min, bbox_my_min, bbox_mx_max, bbox_my_max in projected_map:
+            # culling check
+            if (bbox_mx_max < view_mx_min or 
+                bbox_mx_min > view_mx_max or 
+                bbox_my_max < view_my_min or 
+                bbox_my_min > view_my_max):
+                continue # skip
+            
             # draw labels if zoomed
             if zoom >= 1.5:
-                # centroid to screenspace
-                tx_center = cx_map - cam_x
-                ty_center = cy_map - cam_y 
-                sx_center = (tx_center * zoom * aspect_ratio) + cx
-                sy_center = (-ty_center * zoom) + cy
-                
-                # draw name within bounds
-                if 0 <= sx_center < width - len(name) and 0 <= sy_center < height:
-                    try:
-                        stdscr.addstr(int(sy_center), int(sx_center), name, curses.color_pair(2))
-                    except curses.error:
-                        pass 
+                if view_mx_min <= cx_map <= view_mx_max and view_my_min <= cy_map <= view_my_max:
+                    # centroid to screenspace
+                    tx_center = cx_map - cam_x
+                    ty_center = cy_map - cam_y 
+                    sx_center = (tx_center * zoom * aspect_ratio) + cx
+                    sy_center = (-ty_center * zoom) + cy
+                    
+                    # draw name within bounds
+                    if 0 <= sx_center < width - len(name) and 0 <= sy_center < height:
+                        try:
+                            stdscr.addstr(int(sy_center), int(sx_center), name, curses.color_pair(2))
+                        except curses.error:
+                            pass 
 
             for poly in polys:
                 draw_country_poly(stdscr, poly, cam_x, cam_y, 
