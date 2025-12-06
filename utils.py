@@ -94,3 +94,29 @@ def draw_projected_polyline(stdscr, coords_mx_my, cam_x, cam_y, zoom, aspect_rat
         if (0 <= p1[0] < width and 0 <= p1[1] < height) or \
            (0 <= p2[0] < width and 0 <= p2[1] < height):
             draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char_color)
+
+def simplify_polyline(coords_mx_my, tolerance_mx_my):
+    if not coords_mx_my:
+        return []
+    
+    simplified = [coords_mx_my[0]]
+    last_point = coords_mx_my[0]
+    
+    tolerance_sq = tolerance_mx_my * tolerance_mx_my
+    
+    for i in range(1, len(coords_mx_my)):
+        current_point = coords_mx_my[i]
+        
+        dx = current_point[0] - last_point[0]
+        dy = current_point[1] - last_point[1]
+        dist_sq = dx*dx + dy*dy
+        
+        # Keep the point if it's far enough from the last point
+        if dist_sq >= tolerance_sq:
+            simplified.append(current_point)
+            last_point = current_point
+            
+    if simplified[-1] != coords_mx_my[-1]:
+        simplified.append(coords_mx_my[-1])
+        
+    return simplified

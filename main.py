@@ -8,6 +8,85 @@ import pandas as pd
 from utils import *
 from load_data import *
 
+# async is good?
+# TODO: put this in another file
+class mapData:
+    def __init__(self):
+        self.countries_coords = None 
+        self.roads_data = None
+        self.projected_map_full = None
+        self.data_loaded = False
+        self.error = None
+
+def load_and_project_map(data_obj): # data_obj is an instance of our class
+    try:
+        data_obj.countries_coords = download_world_borders()
+        data_obj.roads_data = download_roads()
+        
+        # project coordinates
+        projected_map = []
+        for name, parts in data_obj.countries_coords.items():
+            country_polys = []
+            all_mx, all_my, count = 0.0, 0.0, 0
+            
+            for part in parts:
+                poly_points = []
+                for lat, lon in part:
+                    mx, my = mercator_project(lat, lon)
+                    poly_points.append((mx, my))
+                    # centroid calculation
+                    all_mx += mx
+                    all_my += my
+                    count += 1
+                    
+                country_polys.append(poly_points)
+            
+            centroid_x = all_mx / count if count > 0 else 0.0
+            centroid_y = all_my / count if count > 0 else 0.0
+            
+            projected_map.append((name, country_polys, centroid_x, centroid_y))
+        
+        data_obj.projected_map_full = projected_map
+        data_obj.data_loaded = True
+        
+    except Exception as e:
+        data_obj.error = f"error loading map: {e}"
+
+# simplifcaiton
+def draw_country_poly(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, width, height, color, simplify_tolerance=0.0):
+    coords_to_draw = poly_coords
+    # tolerance
+    if simplify_tolerance > 0.0:
+        coords_to_draw = simplify_polyline(poly_coords, simplify_tolerance)
+        
+    screen_points = []
+    cx, cy = width // 2, height // 2
+    for mx, my in coords_to_draw:
+        tx = mx - cam_x
+        ty = my - cam_y
+        sx = (tx * zoom * aspect_ratio) + cx
+        sy = (-ty * zoom) + cy
+        screen_points.append((int(sx), int(sy)))
+        
+    # draw lines
+    for i in range(len(screen_points) - 1):
+        p1 = screen_points[i]
+        p2 = screen_points[i+1]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        char = get_line_char(dx, dy)
+        
+        draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | color)
+    
+    # close loop
+    if screen_points:
+        p1 = screen_points[-1]
+        p2 = screen_points[0]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        char = get_line_char(dx, dy)
+        draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | color)
+
 # fetch city layers + cache
 def fetch_city_cache(bbox, cache):
     new_cities = download_cities(bbox)
@@ -33,46 +112,21 @@ def main(stdscr):
     stdscr.addstr(0, 0, "Loading dataset... (this requires internet!!)")
     stdscr.refresh()
     
-    try:
-        countries = download_world_borders()
-        roads_data = download_roads()
-    except Exception as e:
-        stdscr.addstr(2, 0, f"error loading data: {e}")
-        stdscr.addstr(3, 0, "Please press q to quit :(")
-        while True:
-            if stdscr.getch() == ord('q'): return
-
-    # project corods
+    # multithreaded
     projected_map = []
-    stdscr.addstr(1, 0, "Projecting coordinates...")
-    stdscr.refresh()
-
-    for name, parts in countries.items():
-        country_polys = []
-        all_mx, all_my, count = 0.0, 0.0, 0
-        
-        for part in parts:
-            poly_points = []
-            for lat, lon in part:
-                mx, my = mercator_project(lat, lon)
-                poly_points.append((mx, my))
-                # centroid calculation
-                all_mx += mx
-                all_my += my
-                count += 1
-            country_polys.append(poly_points)
-        
-        centroid_x = all_mx / count if count > 0 else 0.0
-        centroid_y = all_my / count if count > 0 else 0.0
-        projected_map.append((name, country_polys, centroid_x, centroid_y))
+    roads_data = []
+    map_data = mapData()
+    loading_thread = threading.Thread(target=load_and_project_map, args=(map_data,))
+    loading_thread.daemon = True
+    loading_thread.start()
 
     # camera and aspect ratio
     cam_x = 0.0
     cam_y = 0.0
     zoom = 1.0
     aspect_ratio = 2.0 
-    city_cache = {'bbox': None, 'cities': []} 
-    # threads
+    # threads & cache
+    city_cache = {'bbox': None, 'cities': []}
     fetch_cities_thread = None
 
     running = True
@@ -81,56 +135,72 @@ def main(stdscr):
         height, width = stdscr.getmaxyx()
         cx, cy = width // 2, height // 2
         
-        # calculate the view's projected bounds (mx_min, my_min, etc.) ONCE
-        lon_span = width / (zoom * aspect_ratio)
-        proj_lat_span = height / zoom
-        
-        # projected bounds of the screen/view
-        view_mx_min = cam_x - lon_span / 2
-        view_mx_max = cam_x + lon_span / 2
-        view_my_min = cam_y - proj_lat_span / 2
-        view_my_max = cam_y + proj_lat_span / 2
+        # draw status bar if the data is not ready
+        if not map_data.data_loaded:
+            stdscr.addstr(1, 0, "processing high-res borders...", curses.color_pair(3))
+            if map_data.error:
+                stdscr.addstr(2, 0, map_data.error, curses.color_pair(4))
+            
+            # keep the hud
+            info = f"Loading... | Pos: {cam_x:.1f}, {cam_y:.1f} | Zoom: {zoom:.1f} | Arr: Move | +/-: Zoom | q: Quit"
+            stdscr.addstr(0, 0, info, curses.color_pair(3))
 
-        # fetch cities at zoom level
-        if zoom >= 3.0:
-            try:
-                # figure out the bounding box in lat/long
-                lon_span = width / (zoom * aspect_ratio)
-                proj_lat_span = height / zoom
-                lon_min = cam_x - lon_span / 2
-                lon_max = cam_x + lon_span / 2
-                proj_lat_min = cam_y - proj_lat_span / 2
-                proj_lat_max = cam_y + proj_lat_span / 2
-                
-                lat_min = mercator_unproject(proj_lat_min)
-                lat_max = mercator_unproject(proj_lat_max)
+        if map_data.data_loaded:
+            # ptu data in variables, and calculate bounds
+            projected_map = map_data.projected_map_full
+            roads_data = map_data.roads_data
+            lon_span = width / (zoom * aspect_ratio)
+            proj_lat_span = height / zoom
+            
+            # projected bounds on the screen
+            view_mx_min = cam_x - lon_span / 2
+            view_mx_max = cam_x + lon_span / 2
+            view_my_min = cam_y - proj_lat_span / 2
+            view_my_max = cam_y + proj_lat_span / 2
 
-                # create a bounding box from this
-                bbox = (lat_min, lon_min, lat_max, lon_max)
-                last_bbox = city_cache['bbox']
-                
-                should_fetch = False
-                if not last_bbox:
-                    should_fetch = True
-                # check for movement between previous and current bbox
-                elif any(abs(bbox[i] - last_bbox[i]) > 0.05 for i in range(4)): 
-                    should_fetch = True
-                
-                # launch thread if we should fetch a city
-                if should_fetch and (fetch_cities_thread is None or not fetch_cities_thread.is_alive()):
-                    if fetch_cities_thread and fetch_cities_thread.is_alive():
-                        # pass if already alive
-                        pass
-                    else:
-                        fetch_cities_thread = threading.Thread(target=fetch_city_cache, args=(bbox, city_cache))
-                        fetch_cities_thread.daemon = True
-                        fetch_cities_thread.start()
-            except Exception:
-                pass # ignore errors #thuglife
+            # fetch cities at zoom level
+            if zoom >= 3.0:
+                try:
+                    # figure out the bounds in lat/long
+                    lon_span = width / (zoom * aspect_ratio)
+                    proj_lat_span = height / zoom
+                    lon_min = cam_x - lon_span / 2
+                    lon_max = cam_x + lon_span / 2
+                    proj_lat_min = cam_y - proj_lat_span / 2
+                    proj_lat_max = cam_y + proj_lat_span / 2
+                    
+                    lat_min = mercator_unproject(proj_lat_min)
+                    lat_max = mercator_unproject(proj_lat_max)
+
+                    # create a bounding box from this
+                    bbox = (lat_min, lon_min, lat_max, lon_max)
+                    last_bbox = city_cache['bbox']
+                    
+                    should_fetch = False
+                    if not last_bbox:
+                        should_fetch = True
+                    # check for movement between previous and current bbox
+                    elif any(abs(bbox[i] - last_bbox[i]) > 0.05 for i in range(4)): 
+                        should_fetch = True
+                    
+                    # launch thread if we should fetch a city
+                    if should_fetch and (fetch_cities_thread is None or not fetch_cities_thread.is_alive()):
+                        if fetch_cities_thread and fetch_cities_thread.is_alive():
+                            # pass if already alive
+                            pass
+                        else:
+                            fetch_cities_thread = threading.Thread(target=fetch_city_cache, args=(bbox, city_cache))
+                            fetch_cities_thread.daemon = True
+                            fetch_cities_thread.start()
+                except Exception:
+                    pass # ignore errors #thuglife
 
         # draw hud
         info = f"Pos: {cam_x:.1f}, {cam_y:.1f} | Zoom: {zoom:.1f} | Arr: Move | +/-: Zoom | q: Quit"
         stdscr.addstr(0, 0, info, curses.color_pair(3))
+
+        simplify_tolerance_mx_my = 0.0 
+        if zoom < 5.0: simplify_tolerance_mx_my = 0.05
 
         # draw map
         for name, polys, cx_map, cy_map in projected_map:
@@ -150,39 +220,11 @@ def main(stdscr):
                         pass 
 
             for poly in polys:
-                screen_points = []
-                for mx, my in poly:
-                    # transalte based on camera
-                    tx = mx - cam_x
-                    ty = my - cam_y
-                    # to screen space
-                    sx = (tx * zoom * aspect_ratio) + cx
-                    sy = (-ty * zoom) + cy 
-                    
-                    screen_points.append((int(sx), int(sy)))
-
-                # draw lines for borders
-                for i in range(len(screen_points) - 1):
-                    p1 = screen_points[i]
-                    p2 = screen_points[i+1]
-                    
-                    # calcualte delta (destination)
-                    dx = p2[0] - p1[0]
-                    dy = p2[1] - p1[1]
-                    
-                    char = get_line_char(dx, dy) 
-                    draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | curses.color_pair(1))
+                draw_country_poly(stdscr, poly, cam_x, cam_y, 
+                        zoom, aspect_ratio, width, height, 
+                        curses.color_pair(1), 
+                        simplify_tolerance_mx_my)
                 
-                # close loop
-                if screen_points:
-                    p1 = screen_points[-1]
-                    p2 = screen_points[0]
-                    
-                    dx = p2[0] - p1[0]
-                    dy = p2[1] - p1[1]
-                    char = get_line_char(dx, dy)
-                    draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | curses.color_pair(1))
-
         # draw roads     
         if zoom >= 5.0 and roads_data:
             road_color = curses.color_pair(6)
