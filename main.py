@@ -56,7 +56,7 @@ def main(stdscr):
 
         # draw status bar if the data is not ready
         if not map_data.data_loaded:
-            stdscr.addstr(1, 0, "processing high-res borders...", curses.color_pair(3))
+            stdscr.addstr(1, 0, "processing country borders...", curses.color_pair(3))
             if map_data.error:
                 stdscr.addstr(2, 0, map_data.error, curses.color_pair(4))
             
@@ -189,8 +189,11 @@ def main(stdscr):
                 # print cities
                 if 0 <= int(sy) < height and 0 <= int(sx) < width:
                     if name != "Bir Lehlou": # trying not to go to jail pt2
-                        stdscr.addch(int(sy), int(sx), ord('*') | city_point_color)
-                        stdscr.addstr(int(sy), min(width - 1, int(sx) + 1), name, city_name_color)
+                        start_x = int(sx) + 1
+                        end_x = start_x + len(name)
+                        if start_x < width and end_x < width: # bounds check
+                            stdscr.addch(int(sy), int(sx), ord('*') | city_point_color)
+                            stdscr.addstr(int(sy), min(width - 1, int(sx) + 1), name, city_name_color)
 
         # TODO: show city detail after zoom level >= 100 
         
