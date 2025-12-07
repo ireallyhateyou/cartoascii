@@ -43,12 +43,21 @@ def main(stdscr):
     # threads & cache
     city_cache = {'bbox': None, 'cities': []}
     fetch_cities_thread = None
+    fetch_local_thread = None
+    # movement detection for lazy loading
+    last_cam_x, last_cam_y = cam_x, cam_y
+    last_move_time = time.time()
 
     running = True
     while running:
         stdscr.clear()
         height, width = stdscr.getmaxyx()
         cx, cy = width // 2, height // 2
+       
+        # update movement timer
+        if cam_x != last_cam_x or cam_y != last_cam_y:
+            last_move_time = time.time()
+            last_cam_x, last_cam_y = cam_x, cam_y
         
         if map_data.data_loaded and not projected_map:
             projected_map = map_data.projected_map_full
@@ -75,8 +84,23 @@ def main(stdscr):
             view_my_min = cam_y - proj_lat_span / 2
             view_my_max = cam_y + proj_lat_span / 2
 
+            # high zoom level
+            if zoom >= 50.0:
+                # avoid spamming api
+                if time.time() - last_move_time > 0.5:
+                    # calculate lat/long bounds
+                    lat_min = mercator_unproject(view_my_min)
+                    lat_max = mercator_unproject(view_my_max)
+                    # simple clamp for bbox
+                    bbox = (min(lat_min, lat_max), view_mx_min, max(lat_min, lat_max), view_mx_max)
+                    
+                    if fetch_local_thread is None or not fetch_local_thread.is_alive():
+                        fetch_local_thread = threading.Thread(target=fetch_local_details, args=(map_data, bbox))
+                        fetch_local_thread.daemon = True
+                        fetch_local_thread.start()
+
             # fetch cities at zoom level
-            if zoom >= 3.0:
+            if zoom >= 3.0 and zoom < 50.0:
                 try:
                     # figure out the bounds in lat/long
                     lon_span = width / (zoom * aspect_ratio)
@@ -152,7 +176,7 @@ def main(stdscr):
                         simplify_tolerance_mx_my)
                 
         # draw roads     
-        if zoom >= 5.0 and roads_data:
+        if zoom >= 5.0 and zoom < 200.0 and roads_data:
             road_color = curses.color_pair(6)
             for road in roads_data:
                 # get bbox
@@ -170,6 +194,43 @@ def main(stdscr):
                     
                 draw_projected_polyline(stdscr, road['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, char | road_color)
             
+        # draw features
+        if zoom >= 50.0:
+            for feat in map_data.local_features:
+                if feat['type'] == 'building':
+                    # draw buildings 
+                    color = curses.color_pair(3) 
+                    fill_poly_scanline(stdscr, feat['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, ord('/') | color)
+                    # draw outline
+                    draw_projected_polyline(stdscr, feat['coords'] + [feat['coords'][0]], cam_x, cam_y, zoom, aspect_ratio, width, height, ord('#') | color)
+                elif feat['type'] == 'park':
+                    # green fill
+                    color = curses.color_pair(1)
+                    fill_poly_scanline(stdscr, feat['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, ord('.') | color)
+                elif feat['type'] == 'poi':
+                    # draw POI
+                    mx, my = feat['coords'][0]
+                    tx = mx - cam_x
+                    ty = my - cam_y
+                    sx = int((tx * zoom * aspect_ratio) + cx)
+                    sy = int((-ty * zoom) + cy)
+                    
+                    if 0 <= sx < width and 0 <= sy < height:
+                        subtype = feat['subtype']
+                        symbol = '?'
+                        if subtype in ['cafe', 'restaurant', 'bar']: symbol = 'C'
+                        elif subtype in ['bank', 'atm']: symbol = '$'
+                        elif subtype in ['school', 'university']: symbol = 'S'
+                        elif subtype == 'parking': symbol = 'P'
+                        
+                        try:
+                            stdscr.addch(sy, sx, ord(symbol) | curses.color_pair(5) | curses.A_BOLD)
+                            # show name if there is space
+                            # THIS IS BUGGY ASF
+                            #if feat['name'] and zoom > 150:
+                            #    stdscr.addstr(sy, sx+2, feat['name'][:15], curses.color_pair(5))
+                        except: pass
+
         # draw cities when there are cities to draw
         cities_to_draw = city_cache['cities'] if zoom >= 3.0 else []
         if cities_to_draw:
@@ -191,7 +252,7 @@ def main(stdscr):
                     if name != "Bir Lehlou": # trying not to go to jail pt2
                         start_x = int(sx) + 1
                         end_x = start_x + len(name)
-                        if start_x < width and end_x < width: # bounds check
+                        if start_x < width and end_x < width: # bounds checko
                             stdscr.addch(int(sy), int(sx), ord('*') | city_point_color)
                             stdscr.addstr(int(sy), min(width - 1, int(sx) + 1), name, city_name_color)
 

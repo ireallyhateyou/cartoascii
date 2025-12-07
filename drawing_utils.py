@@ -7,7 +7,6 @@ def mercator_project(lat, lon):
     # clip
     if lat > mercator_const: lat = mercator_const
     if lat < -mercator_const: lat = -mercator_const
-
     x = lon
     
     # mercator formula
@@ -39,6 +38,51 @@ def get_line_char(dx, dy):
             return ord('/')
     else:
         return ord('#')
+
+def fill_poly_scanline(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, width, height, char_color):
+    # convert to screen coordinates
+    screen_poly = []
+    cx, cy = width // 2, height // 2
+    min_y, max_y = height, 0
+
+    for mx, my in poly_coords:
+        tx = mx - cam_x
+        ty = my - cam_y
+        sx = int((tx * zoom * aspect_ratio) + cx)
+        sy = int((-ty * zoom) + cy)
+        screen_poly.append((sx, sy))
+        if 0 <= sy < height:
+            min_y = min(min_y, sy)
+            max_y = max(max_y, sy)
+
+    if not screen_poly: return
+
+    # identify edges + scanlines
+    edges = []
+    num_points = len(screen_poly)
+    for i in range(num_points):
+        p1 = screen_poly[i]
+        p2 = screen_poly[(i + 1) % num_points]
+        if p1[1] == p2[1]: continue
+        
+        if p1[1] < p2[1]:
+            edges.append((p1[1], p2[1], p1[0], (p2[0] - p1[0]) / (p2[1] - p1[1])))
+        else:
+            edges.append((p2[1], p1[1], p2[0], (p1[0] - p2[0]) / (p1[1] - p2[1])))
+
+    for y in range(max(0, min_y), min(height, max_y + 1), 2): # draw every 2nd line for hatching
+        intersections = []
+        for y1, y2, x_start, slope in edges:
+            if y1 <= y < y2:
+                intersections.append(x_start + slope * (y - y1))
+        
+        intersections.sort()
+        for i in range(0, len(intersections) - 1, 2):
+            x_start = int(intersections[i])
+            x_end = int(intersections[i+1])
+            
+            if x_end > 0 and x_start < width:
+                draw_line(stdscr, max(0, x_start), y, min(width-1, x_end), y, char_color)
 
 def draw_line(stdscr, x0, y0, x1, y1, char):
     # Bresenham's line algorithm

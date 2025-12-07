@@ -31,6 +31,82 @@ class mapData:
         self.projected_map_full = None
         self.data_loaded = False
         self.error = None
+        # for overpass live data
+        self.local_data_cache = {}
+        self.local_features = []
+        self.api = overpy.Overpass()
+
+def fetch_local_details(data_obj, bbox_latlon):
+    s, w, n, e = bbox_latlon
+    # force max size
+    lat_center = (s + n) / 2
+    lon_center = (w + e) / 2
+    limit = 0.015 
+    
+    if (n - s) > (limit * 2):
+        s = lat_center - limit
+        n = lat_center + limit
+    if (e - w) > (limit * 2):
+        w = lon_center - limit
+        e = lon_center + limit
+
+    # caching at high zoom
+    grid_key = (round(s, 3), round(w, 3))
+    if grid_key in data_obj.local_data_cache:
+        data_obj.local_features = data_obj.local_data_cache[grid_key]
+        return
+
+    # queries
+    query = f"""
+        [out:json][timeout:25];
+        (
+          way["building"]({s},{w},{n},{e});
+          way["leisure"="park"]({s},{w},{n},{e});
+          node["amenity"]({s},{w},{n},{e});
+        );
+        (._;>;);
+        out body;
+    """
+    
+    try:
+        result = data_obj.api.query(query)
+        parsed_features = []
+
+        # ways (buildings + parks)
+        for way in result.ways:
+            is_building = "building" in way.tags
+            is_park = way.tags.get("leisure") == "park"
+            
+            coords = []
+            for node in way.nodes:
+                mx, my = mercator_project(float(node.lat), float(node.lon))
+                coords.append((mx, my))
+            
+            if coords:
+                ft_type = "building" if is_building else "park"
+                parsed_features.append({
+                    "type": ft_type,
+                    "coords": coords,
+                    "tags": way.tags
+                })
+
+        # nodes (POI)
+        for node in result.nodes:
+            if "amenity" in node.tags:
+                mx, my = mercator_project(float(node.lat), float(node.lon))
+                parsed_features.append({
+                    "type": "poi",
+                    "coords": [(mx, my)],
+                    "name": node.tags.get("name", node.tags.get("amenity")),
+                    "subtype": node.tags.get("amenity")
+                })
+
+        # update cache and data
+        data_obj.local_data_cache[grid_key] = parsed_features
+        data_obj.local_features = parsed_features
+
+    except Exception as e:
+        print(f"error {e}")
 
 # data_obj is an instance of MapData
 def load_and_project_map(data_obj): 
