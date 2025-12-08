@@ -2,3 +2,4 @@ overpy
 osmnx
 shapely
 pandas
+mapbox_vector_tile

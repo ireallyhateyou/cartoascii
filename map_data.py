@@ -10,7 +10,12 @@ import pandas as pd
 import tempfile
 import zipfile
 import io 
-from drawing_utils import mercator_project
+from drawing_utils import *
+from shapely.geometry import mapping, shape as shapely_shape
+from shapely.ops import unary_union
+import math
+import time
+from tiles import *
 
 # download urls
 country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson"
@@ -23,7 +28,6 @@ cities_cache = "cache_cities.json"
 roads_cache = "cache_roads.json"
 
 # async is good?
-# TODO: put this in another file
 class mapData:
     def __init__(self):
         self.countries_coords = None 
@@ -35,6 +39,8 @@ class mapData:
         self.local_data_cache = {}
         self.local_features = []
         self.api = overpy.Overpass()
+        # tiles
+        self.tile_feature_cache = {}
 
 def fetch_local_details(data_obj, bbox_latlon):
     s, w, n, e = bbox_latlon
@@ -90,15 +96,20 @@ def fetch_local_details(data_obj, bbox_latlon):
                     "tags": way.tags
                 })
 
+        ignored_amenities = {'waste_basket', 'bench', 'bicycle_parking', 'recycling', 
+                             'post_box', 'drinking_water', 'vending_machine', 'telephone'}
+        
         # nodes (POI)
         for node in result.nodes:
             if "amenity" in node.tags:
+                subtype = node.tags.get("amenity")
+                if subtype in ignored_amenities: continue
                 mx, my = mercator_project(float(node.lat), float(node.lon))
                 parsed_features.append({
                     "type": "poi",
                     "coords": [(mx, my)],
-                    "name": node.tags.get("name", node.tags.get("amenity")),
-                    "subtype": node.tags.get("amenity")
+                    "name": node.tags.get("name", subtype),
+                    "subtype": subtype
                 })
 
         # update cache and data

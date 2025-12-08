@@ -85,7 +85,7 @@ def main(stdscr):
             view_my_max = cam_y + proj_lat_span / 2
 
             # high zoom level
-            if zoom >= 50.0:
+            if zoom >= 2000.0:
                 # avoid spamming api
                 if time.time() - last_move_time > 0.5:
                     # calculate lat/long bounds
@@ -100,7 +100,7 @@ def main(stdscr):
                         fetch_local_thread.start()
 
             # fetch cities at zoom level
-            if zoom >= 3.0 and zoom < 50.0:
+            if zoom >= 3.0 and zoom < 2000.0:
                 try:
                     # figure out the bounds in lat/long
                     lon_span = width / (zoom * aspect_ratio)
@@ -176,7 +176,7 @@ def main(stdscr):
                         simplify_tolerance_mx_my)
                 
         # draw roads     
-        if zoom >= 5.0 and zoom < 200.0 and roads_data:
+        if zoom >= 5.0 and zoom < 2000.0 and roads_data:
             road_color = curses.color_pair(6)
             for road in roads_data:
                 # get bbox
@@ -191,11 +191,11 @@ def main(stdscr):
                 char = ord('.') if zoom >= 10 else ord(' ')
                 if road['type'] in ['Major Highway', 'Secondary Highway', 'State Highway']:
                     char = ord('#')
-                    
+                
                 draw_projected_polyline(stdscr, road['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, char | road_color)
             
         # draw features
-        if zoom >= 50.0:
+        if zoom >= 500.0:
             for feat in map_data.local_features:
                 if feat['type'] == 'building':
                     # draw buildings 
@@ -218,10 +218,12 @@ def main(stdscr):
                     if 0 <= sx < width and 0 <= sy < height:
                         subtype = feat['subtype']
                         symbol = '?'
-                        if subtype in ['cafe', 'restaurant', 'bar']: symbol = 'C'
-                        elif subtype in ['bank', 'atm']: symbol = '$'
+                        if subtype in ['cafe', 'restaurant', 'bar', 'pub', 'fast_food']: symbol = 'C'
+                        elif subtype in ['bank', 'atm', 'bureau_de_change']: symbol = '$'
                         elif subtype in ['school', 'university']: symbol = 'S'
                         elif subtype == 'parking': symbol = 'P'
+                        elif subtype == 'cinema': symbol = 'M'
+                        elif subtype == 'pharmacy': symbol = '+'
                         
                         try:
                             stdscr.addch(sy, sx, ord(symbol) | curses.color_pair(5) | curses.A_BOLD)
@@ -232,7 +234,7 @@ def main(stdscr):
                         except: pass
 
         # draw cities when there are cities to draw
-        cities_to_draw = city_cache['cities'] if zoom >= 3.0 else []
+        cities_to_draw = city_cache['cities'] if zoom >= 3.0 and zoom < 2000.0 else []
         if cities_to_draw:
             city_point_color = curses.color_pair(4) if curses.COLORS >= 5 else curses.color_pair(1)
             city_name_color = curses.color_pair(5) if curses.COLORS >= 5 else curses.color_pair(2)
