@@ -97,6 +97,6 @@ def fetch_vector_tile_features(bbox_lonlat, screen_zoom):
     for (z, x, y) in tiles:
         decoded = fetch_and_decode_tile(z, x, y)
         if decoded:
-            out.append(decoded)
+            out.append((z, x, y, decoded))
 
     return out

@@ -42,7 +42,7 @@ class mapData:
         # tiles
         self.tile_feature_cache = {}
 
-def fetch_local_details(data_obj, bbox_latlon):
+def fetch_local_details(data_obj, bbox_latlon, zoom_level):
     s, w, n, e = bbox_latlon
     # force max size
     lat_center = (s + n) / 2
@@ -62,55 +62,55 @@ def fetch_local_details(data_obj, bbox_latlon):
         data_obj.local_features = data_obj.local_data_cache[grid_key]
         return
 
-    # queries
-    query = f"""
-        [out:json][timeout:25];
-        (
-          way["building"]({s},{w},{n},{e});
-          way["leisure"="park"]({s},{w},{n},{e});
-          node["amenity"]({s},{w},{n},{e});
-        );
-        (._;>;);
-        out body;
-    """
     
     try:
-        result = data_obj.api.query(query)
+        tile_data_list = fetch_vector_tile_features((w, s, e, n), zoom_level)
         parsed_features = []
 
-        # ways (buildings + parks)
-        for way in result.ways:
-            is_building = "building" in way.tags
-            is_park = way.tags.get("leisure") == "park"
-            
-            coords = []
-            for node in way.nodes:
-                mx, my = mercator_project(float(node.lat), float(node.lon))
-                coords.append((mx, my))
-            
-            if coords:
-                ft_type = "building" if is_building else "park"
-                parsed_features.append({
-                    "type": ft_type,
-                    "coords": coords,
-                    "tags": way.tags
-                })
+        # convert tile spans
+        for (z, tx, ty, data) in tile_data_list:
+            total_range = 360.0
+            n_tiles = 2 ** z
+            tile_span = total_range / n_tiles
+            tile_origin_x = -180.0 + (tx * tile_span)
+            tile_origin_y = 180.0 - (ty * tile_span)
+            extent = 4096.0
+            scale = tile_span / extent
 
-        ignored_amenities = {'waste_basket', 'bench', 'bicycle_parking', 'recycling', 
-                             'post_box', 'drinking_water', 'vending_machine', 'telephone'}
-        
-        # nodes (POI)
-        for node in result.nodes:
-            if "amenity" in node.tags:
-                subtype = node.tags.get("amenity")
-                if subtype in ignored_amenities: continue
-                mx, my = mercator_project(float(node.lat), float(node.lon))
-                parsed_features.append({
-                    "type": "poi",
-                    "coords": [(mx, my)],
-                    "name": node.tags.get("name", subtype),
-                    "subtype": subtype
-                })
+        def transform_ring(ring):
+                # ring is a list of [x, y]
+                out = []
+                for px, py in ring:
+                    gx = tile_origin_x + (px * scale)
+                    # MVT Y goes down, our Global Mercator Y goes up (Lat -85 to 85 -> Y -180 to 180)
+                    gy = tile_origin_y - (py * scale) 
+                    out.append((gx, gy))
+                return out
+
+        # process data
+        if 'building' in data:
+            for feat in data['building']['features']:
+                geom = feat['geometry']
+                if geom['type'] == 'Polygon':
+                    coords = transform_ring(geom['coordinates'][0])
+                    parsed_features.append({'type': 'building', 'coords': coords, 'tags': feat['properties']})
+                elif geom['type'] == 'MultiPolygon':
+                    for poly in geom['coordinates']:
+                        coords = transform_ring(poly[0])
+                        parsed_features.append({'type': 'building', 'coords': coords, 'tags': feat['properties']})
+
+            if 'poi' in data:
+                for feat in data['poi']['features']:
+                    geom = feat['geometry']
+                    props = feat['properties']
+                    if geom['type'] == 'Point':
+                        px, py = geom['coordinates']
+                        gx = tile_origin_x + (px * scale)
+                        gy = tile_origin_y - (py * scale)
+                        
+                        subtype = props.get('class', 'unknown')
+                        name = props.get('name', '')
+                        parsed_features.append({'type': 'poi', 'coords': [(gx, gy)], 'name': name, 'subtype': subtype})
 
         # update cache and data
         data_obj.local_data_cache[grid_key] = parsed_features

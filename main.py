@@ -95,7 +95,7 @@ def main(stdscr):
                     bbox = (min(lat_min, lat_max), view_mx_min, max(lat_min, lat_max), view_mx_max)
                     
                     if fetch_local_thread is None or not fetch_local_thread.is_alive():
-                        fetch_local_thread = threading.Thread(target=fetch_local_details, args=(map_data, bbox))
+                        fetch_local_thread = threading.Thread(target=fetch_local_details, args=(map_data, bbox, zoom))
                         fetch_local_thread.daemon = True
                         fetch_local_thread.start()
 
