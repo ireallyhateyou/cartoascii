@@ -5,7 +5,7 @@ from functools import lru_cache
 import mapbox_vector_tile
 
 # i dont care enough to hide my key
-tile_url = "https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=t05wdP66KnZDmT08FGIW"
+tile_url = "https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=OOq4i3h6rwSRhzdd51Ls"
 
 # create cache
 cache = os.path.join(os.path.dirname(__file__), "tile_cache")
@@ -51,8 +51,8 @@ def fetch_tile_raw(z, x, y):
         except:
             pass
 
-    # download
-    url = tile_url.format(z=z, x=x, y=y)
+    # download + wrapping
+    url = tile_url.format(z=z, x=x % (2**z), y=y)
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
@@ -86,17 +86,42 @@ def fetch_and_decode_tile(z, x, y):
 
 
 def fetch_vector_tile_features(bbox_lonlat, screen_zoom):
-    # fetch tile features
+    """
+    Fetches and decodes vector tiles covering the given bounding box.
+    bbox_lonlat: (lon_min, lat_min, lon_max, lat_max)
+    screen_zoom: The current zoom multiplier from the main app
+    """
     lon_min, lat_min, lon_max, lat_max = bbox_lonlat
+    
+    # 1. Calculate the span of the visible window in degrees
+    lon_span = abs(lon_max - lon_min)
+    
+    # Safety check for invalid coordinates
+    if lon_span <= 0:
+        return []
 
-    # map screen zoom to tile zoom
-    tile_z = int(min(max(4, round(math.log2(screen_zoom + 1) + 5)), 16))
-    tiles = tiles_for_bbox(lon_min, lat_min, lon_max, lat_max, tile_z)
+    # 2. Map the visible degrees to a standard Web Mercator Zoom level (z)
+    # The world is 360 degrees wide. 
+    # At Z0, 1 tile = 360 degrees.
+    # At Z1, 1 tile = 180 degrees.
+    # Formula: z = log2(360 / degrees_visible)
+    # We add 1.0 as a "buffer" to get slightly higher detail than the bare minimum.
+    zoom_boost = max(0, math.log2(screen_zoom * 1e6))
+    calc_z = math.log2(360.0 / lon_span) + 1.0 + zoom_boost
+    
+    # 3. Clamp the zoom between 0 and 14 (MapTiler Free Tier limits)
+    tile_z = int(min(max(0, calc_z), 14))
 
-    out = []
-    for (z, x, y) in tiles:
-        decoded = fetch_and_decode_tile(z, x, y)
-        if decoded:
-            out.append((z, x, y, decoded))
+    # 4. Get the list of tile coordinates (z, x, y) that cover this area
+    tiles_to_get = tiles_for_bbox(lon_min, lat_min, lon_max, lat_max, tile_z)
 
-    return out
+    # 5. Fetch and decode the tiles
+    features_list = []
+    
+    # Limit the number of tiles per fetch to prevent hanging (max 16 tiles)
+    for (z, x, y) in tiles_to_get[:16]:
+        decoded_data = fetch_and_decode_tile(z, x, y)
+        if decoded_data:
+            features_list.append((z, x, y, decoded_data))
+            
+    return features_list

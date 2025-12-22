@@ -1,26 +1,53 @@
 import curses
 import math
 
-mercator_const = 85.051129
+R = 6378137.0
+mercator_const = 85.05112878
+
+INSIDE, LEFT, RIGHT, BOTTOM, TOP = 0, 1, 2, 4, 8
+
+def compute_out_code(x, y, w, h):
+    code = INSIDE
+    if x < 0: code |= LEFT
+    elif x >= w: code |= RIGHT
+    if y < 0: code |= BOTTOM
+    elif y >= h: code |= TOP
+    return code
+
+def clip_line(x0, y0, x1, y1, w, h):
+    code0 = compute_out_code(x0, y0, w, h)
+    code1 = compute_out_code(x1, y1, w, h)
+    while True:
+        if not (code0 | code1): return x0, y0, x1, y1
+        if code0 & code1: return None
+        outcode = code0 if code0 else code1
+        if outcode & TOP:
+            x = x0 + (x1 - x0) * (h - 1 - y0) / (y1 - y0)
+            y = h - 1
+        elif outcode & BOTTOM:
+            x = x0 + (x1 - x0) * (0 - y0) / (y1 - y0)
+            y = 0
+        elif outcode & RIGHT:
+            y = y0 + (y1 - y0) * (w - 1 - x0) / (x1 - x0)
+            x = w - 1
+        elif outcode & LEFT:
+            y = y0 + (y1 - y0) * (0 - x0) / (x1 - x0)
+            x = 0
+        if outcode == code0:
+            x0, y0 = int(x), int(y)
+            code0 = compute_out_code(x0, y0, w, h)
+        else:
+            x1, y1 = int(x), int(y)
+            code1 = compute_out_code(x1, y1, w, h)
 
 def mercator_project(lat, lon):
-    # clip
-    if lat > mercator_const: lat = mercator_const
-    if lat < -mercator_const: lat = -mercator_const
-    x = lon
-    
-    # mercator formula
-    lat_rad = math.radians(lat)
-    y = math.log(math.tan((math.pi / 4) + (lat_rad / 2)))
-    y = math.degrees(y)
-    
+    lat = max(min(lat, mercator_const), -mercator_const)
+    x = R * math.radians(lon)
+    y = R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
     return x, y
 
 def mercator_unproject(y_proj):
-    # reverse of : y = math.log(math.tan((math.pi / 4) + (lat_rad / 2)))
-    y_proj_norm = math.radians(y_proj)
-    lat_rad = 2 * (math.atan(math.exp(y_proj_norm)) - (math.pi / 4))
-    return math.degrees(lat_rad)
+    return math.degrees(2 * math.atan(math.exp(y_proj / R)) - math.pi / 2)
 
 def get_line_char(dx, dy):
     abs_dx = abs(dx)
@@ -85,14 +112,12 @@ def fill_poly_scanline(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, wi
                 draw_line(stdscr, max(0, x_start), y, min(width-1, x_end), y, char_color)
 
 def draw_line(stdscr, x0, y0, x1, y1, char):
-    # Bresenham's line algorithm
-    # https://www.cs.drexel.edu/~popyack/Courses/CSP/Fa18/notes/08.3_MoreGraphics/Bresenham.html?CurrentSlide=2
     height, width = stdscr.getmaxyx()
-
-    # dont go off boundaries
-    if (x0 < 0 and x1 < 0) or (x0 >= width and x1 >= width): return
-    if (y0 < 0 and y1 < 0) or (y0 >= height and y1 >= height): return
-
+    # Use Cohen-Sutherland clipping to prevent hangs on huge lines
+    clipped = clip_line(x0, y0, x1, y1, width, height)
+    if not clipped: return
+    x0, y0, x1, y1 = clipped
+ 
     dx = abs(x1 - x0)
     dy = abs(y1 - y0)
     sx = 1 if x0 < x1 else -1
