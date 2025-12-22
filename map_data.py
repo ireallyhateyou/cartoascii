@@ -38,140 +38,79 @@ class mapData:
         # for overpass live data
         self.local_data_cache = {}
         self.local_features = []
+        self.api = overpy.Overpass()
         # tiles
         self.tile_feature_cache = {}
 
-    def update_local_features(self, bbox_latlon, zoom):
-        # The fetcher expects (lon_min, lat_min, lon_max, lat_max)
-        s, w, n, e = bbox_latlon
-        try:
-            tile_data_list = fetch_vector_tile_features((w, s, e, n), zoom)
-            if not tile_data_list:
-                return
-            
-            parsed_features = []
-            
-            for z, tx, ty, data in tile_data_list:
-                # Calculate tile bounds
-                def n_to_lon(n, z): 
-                    return n / 2.0**z * 360.0 - 180.0
-                def n_to_lat(n, z):
-                    return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * n / 2.0**z))))
-
-                t_w = n_to_lon(tx, z)
-                t_e = n_to_lon(tx + 1, z)
-                t_n = n_to_lat(ty, z)
-                t_s = n_to_lat(ty + 1, z)
-                
-                # Process buildings
-                if 'building' in data:
-                    for feat in data['building']['features']:
-                        geom = feat['geometry']
-                        if geom['type'] == 'Polygon':
-                            raw_coords = geom['coordinates'][0]
-                            coords = []
-                            extent = 4096
-                            n = 2 ** z
-                            for px, py in raw_coords:
-                                lon = (tx + px / extent) / n * 360.0 - 180.0
-                                lat = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (ty + py / extent) / n))))
-                                mx, my = mercator_project(lat, lon)
-                                coords.append((mx, my))
-
-                            if len(coords) >= 3:
-                                parsed_features.append({
-                                    'type': 'building',
-                                    'coords': coords,
-                                    'tags': feat.get('properties', {})
-                                })
-                
-                # Process POIs
-                if 'poi' in data:
-                    for feat in data['poi']['features']:
-                        geom = feat['geometry']
-                        if geom['type'] == 'Point':                            
-                            px, py = geom['coordinates']
-                            extent = 4096
-                            gx = t_w + (px / extent) * (t_e - t_w)
-                            gy = t_s + (1.0 - py / extent) * (t_n - t_s)
-                            mx, my = mercator_project(gy, gx)
-                            
-                            parsed_features.append({
-                                'type': 'poi',
-                                'coords': [(mx, my)],
-                                'name': feat.get('properties', {}).get('name', 'POI'),
-                                'subtype': feat.get('properties', {}).get('class', 'amenity')
-                            })
-            
-            self.local_features = parsed_features
-            
-        except Exception as e:
-            print(f"Error updating local features: {e}")
-             
-            
-def fetch_local_details(data_obj, bbox_latlon, zoom_level):
+def fetch_local_details(data_obj, bbox_latlon):
     s, w, n, e = bbox_latlon
-    parsed_features = []
-    if zoom_level < 0.0001: return
+    # force max size
+    lat_center = (s + n) / 2
+    lon_center = (w + e) / 2
+    limit = 0.015 
     
-    # caching
+    if (n - s) > (limit * 2):
+        s = lat_center - limit
+        n = lat_center + limit
+    if (e - w) > (limit * 2):
+        w = lon_center - limit
+        e = lon_center + limit
+
+    # caching at high zoom
     grid_key = (round(s, 3), round(w, 3))
     if grid_key in data_obj.local_data_cache:
         data_obj.local_features = data_obj.local_data_cache[grid_key]
         return
+
+    # queries
+    query = f"""
+        [out:json][timeout:25];
+        (
+          way["building"]({s},{w},{n},{e});
+          way["leisure"="park"]({s},{w},{n},{e});
+          node["amenity"]({s},{w},{n},{e});
+        );
+        (._;>;);
+        out body;
+    """
     
     try:
-        tile_data_list = fetch_vector_tile_features((w, s, e, n), zoom_level)
+        result = data_obj.api.query(query)
+        parsed_features = []
 
-        # convert tile spans
-        for z, tx, ty, data in tile_data_list:
-            # tile geographic bounds
-            def n_to_lon(n, z): return n / 2.0**z * 360.0 - 180.0
-            def n_to_lat(n, z):
-                return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * n / 2.0**z))))
+        # ways (buildings + parks)
+        for way in result.ways:
+            is_building = "building" in way.tags
+            is_park = way.tags.get("leisure") == "park"
             
-            t_w = n_to_lon(tx, z)
-            t_e = n_to_lon(tx + 1, z)
-            t_n = n_to_lat(ty, z)
-            t_s = n_to_lat(ty + 1, z)
+            coords = []
+            for node in way.nodes:
+                mx, my = mercator_project(float(node.lat), float(node.lon))
+                coords.append((mx, my))
+            
+            if coords:
+                ft_type = "building" if is_building else "park"
+                parsed_features.append({
+                    "type": ft_type,
+                    "coords": coords,
+                    "tags": way.tags
+                })
 
-            # Process Buildings
-            if 'building' in data:
-                for feat in data['building']['features']:
-                    geom = feat['geometry']
-                    if geom['type'] == 'Polygon':
-                        raw_coords = geom['coordinates'][0]
-                        coords = []
-                        extent = 4096
-                        n = 2 ** z
-                        for px, py in raw_coords:
-                            lon = (tx + px / extent) / n * 360.0 - 180.0
-                            lat = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (ty + py / extent) / n))))
-                            mx, my = mercator_project(lat, lon)
-                            coords.append((mx, my))
-
-                        parsed_features.append({
-                            'type': 'building', 
-                            'coords': coords, 
-                            'tags': feat['properties']
-                        })
-
-            # Process POIs
-            if 'poi' in data:
-                for feat in data['poi']['features']:
-                    geom = feat['geometry']
-                    if geom['type'] == 'Point':
-                        px, py = geom['coordinates']
-                        gx = t_w + (px / 4096.0) * (t_e - t_w)
-                        gy = t_s + (1.0 - py / 4096.0) * (t_n - t_s)
-                        mx, my = mercator_project(gy, gx)
-
-                        parsed_features.append({
-                            "type": "poi",
-                            "coords": [(mx, my)],
-                            "name": feat['properties'].get("name", "POI"),
-                            "subtype": feat['properties'].get("class", "amenity")
-                        })
+        ignored_amenities = {'waste_basket', 'bench', 'bicycle_parking', 'recycling', 
+                             'post_box', 'drinking_water', 'vending_machine', 'telephone'}
+        
+        # nodes (POI)
+        for node in result.nodes:
+            if "amenity" in node.tags:
+                subtype = node.tags.get("amenity")
+                if subtype in ignored_amenities: continue
+                mx, my = mercator_project(float(node.lat), float(node.lon))
+                parsed_features.append({
+                    "type": "poi",
+                    "coords": [(mx, my)],
+                    "name": node.tags.get("name", subtype),
+                    "subtype": subtype
+                })
 
         # update cache and data
         data_obj.local_data_cache[grid_key] = parsed_features
