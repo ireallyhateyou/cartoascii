@@ -153,6 +153,97 @@ def draw_line(stdscr, x0, y0, x1, y1, char_attr):
             err += dx
             y0 += sy
 
+def draw_line_braille(buffer, x0, y0, x1, y1, color):
+    # Bresenham's algorithm adapted for the buffer
+    x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+    
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx - dy
+
+    while True:
+        buffer.set_pixel(x0, y0, color)
+        
+        if x0 == x1 and y0 == y1: break
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            x0 += sx
+        if e2 < dx:
+            err += dx
+            y0 += sy
+
+def fill_poly_braille(buffer, poly_coords, cam_x, cam_y, zoom, aspect_ratio, width, height, color):
+    pixel_poly = []
+    
+    px_width = width 
+    px_height = height
+    cx, cy = px_width // 2, px_height // 2
+
+    min_y, max_y = px_height, 0
+
+    for mx, my in poly_coords:
+        tx = mx - cam_x
+        ty = my - cam_y
+        sx = int((tx * zoom * aspect_ratio * 2) + cx) 
+        sy = int((-ty * zoom * 4) + cy) 
+        pixel_poly.append((sx, sy))
+        if 0 <= sy < px_height:
+            min_y = min(min_y, sy)
+            max_y = max(max_y, sy)
+
+    if not pixel_poly: return
+
+    # edges
+    edges = []
+    num_points = len(pixel_poly)
+    for i in range(num_points):
+        p1 = pixel_poly[i]
+        p2 = pixel_poly[(i + 1) % num_points]
+        if p1[1] == p2[1]: continue
+        
+        if p1[1] < p2[1]:
+            edges.append((p1[1], p2[1], p1[0], (p2[0] - p1[0]) / (p2[1] - p1[1])))
+        else:
+            edges.append((p2[1], p1[1], p2[0], (p1[0] - p2[0]) / (p1[1] - p2[1])))
+
+    # scanline
+    for y in range(max(0, min_y), min(px_height, max_y + 1)): 
+        intersections = []
+        for y1, y2, x_start, slope in edges:
+            if y1 <= y < y2:
+                intersections.append(x_start + slope * (y - y1))
+        
+        intersections.sort()
+        for i in range(0, len(intersections) - 1, 2):
+            x_start = int(intersections[i])
+            x_end = int(intersections[i+1])
+            if x_end > 0 and x_start < px_width:
+                # horizontal line drawing
+                for x in range(max(0, x_start), min(px_width, x_end)):
+                    buffer.set_pixel(x, y, color)
+
+def draw_projected_polyline_braille(buffer, coords, cam_x, cam_y, zoom, aspect_ratio, width, height, color):
+    cx, cy = width // 2, height // 2
+    screen_points = []
+    
+    for mx, my in coords:
+        tx = mx - cam_x
+        ty = my - cam_y
+        sx = (tx * zoom * aspect_ratio * 2) + cx
+        sy = (-ty * zoom * 4) + cy
+        screen_points.append((int(sx), int(sy)))
+
+    for i in range(len(screen_points) - 1):
+        p1 = screen_points[i]
+        p2 = screen_points[i+1]
+        
+        # bounds check
+        if (0 <= p1[0] < width or 0 <= p1[1] < height):
+             draw_line_braille(buffer, p1[0], p1[1], p2[0], p2[1], color)
+
 def draw_projected_polyline(stdscr, coords_mx_my, cam_x, cam_y, zoom, aspect_ratio, width, height, char_color):
     screen_points = []
     cx, cy = width // 2, height // 2

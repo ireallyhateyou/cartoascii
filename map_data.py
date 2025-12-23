@@ -11,6 +11,7 @@ import zipfile
 import shutil
 from drawing_utils import mercator_project
 from tiles import fetch_and_decode_tile, tile_coords_to_lonlat, tiles_for_bbox
+import concurrent.futures
 
 # download urls
 country_borders = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson"
@@ -24,13 +25,12 @@ roads_cache = "cache_roads.pkl"
 
 class mapData:
     def __init__(self):
-        self.countries_coords = []      # Cities
-        self.projected_map_full = []    # Borders
-        self.roads_data = []            # Global Roads
-        self.local_features = []        # Local Tile Data
-        
+        self.projected_map_full = []
+        self.roads_data = []
+        self.local_features = []
+        self.feature_index = []
         self.data_loaded = False
-        self.status = "Initializing..."
+        self.status = "Initializing (this may take a while)..."
         self.progress = 0.0
         self.lock = threading.Lock()
 
@@ -82,7 +82,6 @@ def download_borders(data_obj):
         del countries["W. Sahara"]
 
     projected_map = []
-    projected_map = []
     for geom in countries.values():
         # get bbox for each country
         polys = geom_to_poly_list(geom)
@@ -93,7 +92,7 @@ def download_borders(data_obj):
             ys = [p[1] for p in poly]
             bbox = (min(xs), min(ys), max(xs), max(ys))
             projected_map.append({'bbox': bbox, 'geom': poly})
-            
+
     return projected_map
 
 def download_global_roads(data_obj):
@@ -198,15 +197,20 @@ def fetch_local_details(data_obj, bbox, zoom):
     # determines tile zoom based on screen zoom
     z = 14 if zoom > 300 else 12
     l_min, b_min, l_max, b_max = bbox
-    
-    visible = tiles_for_bbox(l_min, b_min, l_max, b_max, z)
-    
+    visible_tiles = tiles_for_bbox(l_min, b_min, l_max, b_max, z)
     new_features = []
     
-    for tx, ty in visible:
-        raw = fetch_and_decode_tile(z, tx, ty)
-        if not raw: continue
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        future_to_tile = {
+            executor.submit(fetch_and_decode_tile, z, tx, ty): (tx, ty) 
+            for tx, ty in visible_tiles
+        }
         
+        for future in concurrent.futures.as_completed(future_to_tile):
+            tx, ty = future_to_tile[future]
+            raw = future.result()
+            if not raw: continue
+
         # roads
         if 'transportation' in raw:
             for f in raw['transportation']['features']:

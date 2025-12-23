@@ -2,7 +2,8 @@ import curses
 import time
 import threading
 from drawing_utils import *
-from map_data import mapData, load_initial_data, fetch_local_details
+from braille import *
+from map_data import *
 
 def draw_progress_bar(stdscr, y, x, width, percent, message):
     # helper for loading screen
@@ -41,6 +42,7 @@ def main(stdscr):
     cam_x, cam_y = 0.0, 0.0
     zoom = 1.0
     running = True
+    buffer = None
     
     # threads & cache
     fetch_thread = None
@@ -49,7 +51,11 @@ def main(stdscr):
     while running:
         height, width = stdscr.getmaxyx()
         cx, cy = width // 2, height // 2
-        
+        if not buffer or buffer.cols != width or buffer.rows != height:
+             buffer = BrailleBuffer(width * 2, height * 4)
+        buffer.clear()
+        stdscr.refresh()
+
         # loading screen
         if not map_data.data_loaded:
             stdscr.erase()
@@ -80,6 +86,13 @@ def main(stdscr):
         min_cam_y, max_cam_y = cam_y - view_h/2, cam_y + view_h/2
 
         # culling for world borders
+        simplify = 0.05 / zoom
+        view_w = (width / aspect_ratio) / zoom
+        view_h = height / zoom
+        min_cam_x, max_cam_x = cam_x - view_w/2, cam_x + view_w/2
+        min_cam_y, max_cam_y = cam_y - view_h/2, cam_y + view_h/2
+
+        # culling for world borders
         for item in map_data.projected_map_full:
             bx1, by1, bx2, by2 = item['bbox']
             
@@ -87,8 +100,9 @@ def main(stdscr):
                 by2 < min_cam_y or by1 > max_cam_y):
                 continue
 
-            draw_country_poly(stdscr, item['geom'], cam_x, cam_y, zoom, aspect_ratio, width, height, curses.color_pair(1), simplify)
-        
+            draw_projected_polyline_braille(buffer, item['geom'], cam_x, cam_y, zoom, aspect_ratio, 
+                buffer.width, buffer.height, 1) 
+                    
         # naturalearth roads
         if map_data.roads_data and zoom > 5.0 and zoom < 1000.0:
             for road in map_data.roads_data:
@@ -97,8 +111,12 @@ def main(stdscr):
                 if (bx2 < cam_x - width/zoom or bx1 > cam_x + width/zoom or
                     by2 < cam_y - height/zoom or by1 > cam_y + height/zoom): continue
                 
-                # use drawing_utils implementation
-                draw_projected_polyline(stdscr, road['geom'], cam_x, cam_y, zoom, aspect_ratio, width, height, ord('.') | curses.color_pair(5))
+                draw_projected_polyline_braille(
+                    buffer, 
+                    road['geom'], 
+                    cam_x, cam_y, zoom, aspect_ratio, 
+                    buffer.width, buffer.height, 
+                    5)
 
         # fetch features 
         with map_data.lock:
@@ -109,7 +127,8 @@ def main(stdscr):
             for f in local_feats:
                 if f['type'] == 'building':
                     # outline
-                    draw_projected_polyline(stdscr, f['coords'] + [f['coords'][0]], cam_x, cam_y, zoom, aspect_ratio, width, height, curses.ACS_CKBOARD | curses.color_pair(9))
+                    fill_poly_braille(buffer, f['coords'], cam_x, cam_y, zoom, aspect_ratio, 
+                                    buffer.width, buffer.height, 2)
 
         # local roads
         if zoom > 300:
@@ -122,7 +141,8 @@ def main(stdscr):
                     attr = curses.color_pair(8)|curses.A_BOLD if is_major else curses.color_pair(5)
                     
                     # draw line
-                    draw_projected_polyline(stdscr, f['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, char | attr)
+                    draw_projected_polyline_braille(buffer, f['coords'], cam_x, cam_y, zoom, aspect_ratio, 
+                                                  buffer.width, buffer.height, 1)
                     
                     # name
                     if zoom > 1500 and f.get('name') and len(pts) > 1:
@@ -130,6 +150,35 @@ def main(stdscr):
                         if 0 <= mid[1] < height and 0 <= mid[0] < width - len(f['name']):
                             try: stdscr.addstr(mid[1], mid[0], f['name'], curses.color_pair(5)|curses.A_DIM)
                             except: pass
+
+        frame_lines = buffer.frame()
+        for y, line_data in enumerate(frame_lines):
+            try:
+                current_x = 0
+                # run length encoding?? wtf)
+                while current_x < len(line_data):
+                    char, color_idx = line_data[current_x]
+                    
+                    chunk = char
+                    next_x = current_x + 1
+                    while next_x < len(line_data) and line_data[next_x][1] == color_idx:
+                        chunk += line_data[next_x][0]
+                        next_x += 1
+                    attr = curses.color_pair(color_idx) if color_idx else curses.color_pair(3)
+                    stdscr.addstr(y, current_x, chunk, attr)
+                    
+                    current_x = next_x
+            except curses.error:
+                pass
+
+        # overlay labels
+        if zoom > 1000:
+            for f in local_feats:
+                if f['type'] == 'label':
+                    sx, sy = to_screen(*f['coords']) 
+                    if 0 <= sy < height and 0 <= sx < width:
+                        try: stdscr.addstr(sy, sx, f['name'], curses.color_pair(3)|curses.A_BOLD)
+                        except: pass
 
         # draw cities, settlemnts, and the like
         pop_cutoff = 0
