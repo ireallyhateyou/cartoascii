@@ -82,9 +82,18 @@ def download_borders(data_obj):
         del countries["W. Sahara"]
 
     projected_map = []
+    projected_map = []
     for geom in countries.values():
-        projected_map.extend(geom_to_poly_list(geom))
-    
+        # get bbox for each country
+        polys = geom_to_poly_list(geom)
+        
+        for poly in polys:
+            if not poly: continue
+            xs = [p[0] for p in poly]
+            ys = [p[1] for p in poly]
+            bbox = (min(xs), min(ys), max(xs), max(ys))
+            projected_map.append({'bbox': bbox, 'geom': poly})
+            
     return projected_map
 
 def download_global_roads(data_obj):

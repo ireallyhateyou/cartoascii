@@ -56,7 +56,7 @@ def main(stdscr):
             msg = f"{map_data.status} {int(map_data.progress)}%"
             draw_progress_bar(stdscr, height//2, max(0, width//2 - 20), 40, map_data.progress, msg)
             stdscr.refresh()
-            time.sleep(0.1)
+            ####time.sleep(0.1)
             continue
             
         # initial zoom jump
@@ -74,9 +74,21 @@ def main(stdscr):
 
         # world borders
         simplify = 0.05 / zoom
-        for poly in map_data.projected_map_full:
-            draw_country_poly(stdscr, poly, cam_x, cam_y, zoom, aspect_ratio, width, height, curses.color_pair(1), simplify)
+        view_w = (width / aspect_ratio) / zoom
+        view_h = height / zoom
+        min_cam_x, max_cam_x = cam_x - view_w/2, cam_x + view_w/2
+        min_cam_y, max_cam_y = cam_y - view_h/2, cam_y + view_h/2
 
+        # culling for world borders
+        for item in map_data.projected_map_full:
+            bx1, by1, bx2, by2 = item['bbox']
+            
+            if (bx2 < min_cam_x or bx1 > max_cam_x or
+                by2 < min_cam_y or by1 > max_cam_y):
+                continue
+
+            draw_country_poly(stdscr, item['geom'], cam_x, cam_y, zoom, aspect_ratio, width, height, curses.color_pair(1), simplify)
+        
         # naturalearth roads
         if map_data.roads_data and zoom > 5.0 and zoom < 1000.0:
             for road in map_data.roads_data:
@@ -128,7 +140,7 @@ def main(stdscr):
 
         if map_data.countries_coords:
             for city in map_data.countries_coords:
-                if city['pop'] < pop_cutoff: continue
+                if city['pop'] < pop_cutoff: break 
                 
                 sx, sy = to_screen(*city['coords'])
                 
@@ -177,7 +189,7 @@ def main(stdscr):
         try: k = stdscr.getch()
         except: k = -1
         
-        spd = 20.0/zoom
+        spd = 10 / zoom
         if k == ord('q'): running = False
         elif k == curses.KEY_RIGHT: cam_x += spd
         elif k == curses.KEY_LEFT: cam_x -= spd

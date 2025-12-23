@@ -86,12 +86,54 @@ def fill_poly_scanline(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, wi
                 draw_line(stdscr, max(0, x_start), y, min(width-1, x_end), y, char_color)
 
 def draw_line(stdscr, x0, y0, x1, y1, char_attr):
-    # Bresenham's line algorithm
     height, width = stdscr.getmaxyx()
-
-    # ensure ints
     x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
 
+    # Cohen-Sutherland Line Clipping 
+    INSIDE, LEFT, RIGHT, BOTTOM, TOP = 0, 1, 2, 4, 8
+
+    def compute_out_code(x, y):
+        code = INSIDE
+        if x < 0: code |= LEFT
+        elif x >= width: code |= RIGHT
+        if y < 0: code |= TOP  # curses y=0 is top
+        elif y >= height: code |= BOTTOM
+        return code
+
+    code0 = compute_out_code(x0, y0)
+    code1 = compute_out_code(x1, y1)
+
+    while True:
+        if not (code0 | code1): # Both inside
+            break
+        if code0 & code1: # Both outside same region
+            return 
+        
+        # Calculate intersection
+        code_out = code0 if code0 else code1
+        x, y = 0, 0
+        
+        if code_out & BOTTOM:
+            x = x0 + (x1 - x0) * (height - 1 - y0) / (y1 - y0)
+            y = height - 1
+        elif code_out & TOP:
+            x = x0 + (x1 - x0) * (0 - y0) / (y1 - y0)
+            y = 0
+        elif code_out & RIGHT:
+            y = y0 + (y1 - y0) * (width - 1 - x0) / (x1 - x0)
+            x = width - 1
+        elif code_out & LEFT:
+            y = y0 + (y1 - y0) * (0 - x0) / (x1 - x0)
+            x = 0
+
+        if code_out == code0:
+            x0, y0 = int(x), int(y)
+            code0 = compute_out_code(x0, y0)
+        else:
+            x1, y1 = int(x), int(y)
+            code1 = compute_out_code(x1, y1)
+
+    # Fast Bresenham
     dx = abs(x1 - x0)
     dy = abs(y1 - y0)
     sx = 1 if x0 < x1 else -1
@@ -99,13 +141,10 @@ def draw_line(stdscr, x0, y0, x1, y1, char_attr):
     err = dx - dy
 
     while True:
-        if 0 <= x0 < width and 0 <= y0 < height:
-            try:
-                stdscr.addch(y0, x0, char_attr)
-            except curses.error:
-                pass
-        if x0 == x1 and y0 == y1:
-            break
+        try: stdscr.addch(y0, x0, char_attr)
+        except: pass 
+        
+        if x0 == x1 and y0 == y1: break
         e2 = 2 * err
         if e2 > -dy:
             err -= dy
