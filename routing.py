@@ -1,0 +1,50 @@
+import requests
+import json
+
+apikey = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImUyMWU4MDUxYzQwYTQ5N2E4MmEzYmU4ZmRjYzdlYjliIiwiaCI6Im11cm11cjY0In0="
+
+def geocode_address(address_str):
+    url = "https://nominatim.openstreetmap.org/search"
+    headers = {
+        'User-Agent': 'cartoascii/1.0 (test@nasa.gov)' 
+    }
+    
+    params = {
+        'q': address_str,
+        'format': 'json',
+        'limit': 1
+    }
+    
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=5)
+        r.raise_for_status()
+        data = r.json()
+        if data:
+            lat = float(data[0]['lat'])
+            lon = float(data[0]['lon'])
+            return (lon, lat)
+    except Exception as e:
+        print(f"geocode error: {e}")
+        
+    return None
+
+def get_route(start_lon, start_lat, end_lon, end_lat):
+    url = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
+    headers = {
+        'Authorization': apikey,
+        'Content-Type': 'application/json; charset=utf-8'
+    }
+    body = {
+        "coordinates": [[start_lon, start_lat], [end_lon, end_lat]]
+    }
+    
+    try:
+        r = requests.post(url, json=body, headers=headers, timeout=5)
+        r.raise_for_status()
+        data = r.json()
+        if 'features' in data and data['features']:
+            return data['features'][0]['geometry']['coordinates']
+    except Exception as e:
+        print(f"route error {e}")
+        
+    return []

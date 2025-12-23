@@ -33,8 +33,6 @@ class TileManager:
         self.requested_tiles = set() 
 
     def get_tile(self, z, x, y):
-        # removed lock for read - dict.get is atomic in python
-        # this reduces contention significantly
         return self.tiles.get((z, x, y))
 
     def add_tile(self, z, x, y, features):
@@ -42,7 +40,6 @@ class TileManager:
             # simple eviction
             if len(self.tiles) > self.max_cache_size:
                 try:
-                    # remove a few items to avoid locking constantly
                     for _ in range(5):
                         self.tiles.pop(next(iter(self.tiles)))
                 except KeyError:
@@ -67,17 +64,17 @@ class mapData:
         self.data_loaded = False
         self.status = "Initializing..."
         self.progress = 0.0
-        
+        self.start_marker = None 
+        self.end_marker = None   
+        self.route_poly = []     
+
         self.tile_manager = TileManager()
-        # reduced workers to 2 to prevent cpu starvation
         self.fetch_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     def shutdown(self):
         self.fetch_executor.shutdown(wait=False)
 
-# blud...
 class FastCoordinateTransformer:
-    # pre-calc constants so loop goes fast
     def __init__(self, z, x, y, extent=4096):
         self.n = 2.0 ** z
         self.x_offset = x
@@ -87,16 +84,12 @@ class FastCoordinateTransformer:
         self.mercator_const = 85.051129
 
     def tile_to_mercator(self, px, py):
-        # inline tile_coords_to_lonlat logic
         lon_deg = (self.x_offset + px / self.extent) / self.n * 360.0 - 180.0
         
-        # fast lat calc
-        # lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * (y + py / extent) / n)))
         val = self.pi * (1 - 2 * (self.y_offset + py / self.extent) / self.n)
         lat_rad = math.atan(math.sinh(val))
         lat_deg = math.degrees(lat_rad)
 
-        # inline mercator_project logic
         if lat_deg > self.mercator_const: lat_deg = self.mercator_const
         if lat_deg < -self.mercator_const: lat_deg = -self.mercator_const
         
@@ -142,7 +135,6 @@ def download_borders(data_obj):
             name = feat['properties'].get('name', 'Unknown')
             countries[name] = shape(feat['geometry'])
 
-    # trying not to go to jail :c
     if "W. Sahara" in countries and "Morocco" in countries:
         morocco_geom = countries["Morocco"]
         ws_geom = countries["W. Sahara"]
@@ -203,7 +195,6 @@ def download_global_roads(data_obj):
                     bbox = (min(xs), min(ys), max(xs), max(ys))
                     processed_roads.append({'bbox': bbox, 'geom': coords})
 
-        # save it to a cache :D
         pd.to_pickle(processed_roads, roads_cache)
         shutil.rmtree(tmp_dir, ignore_errors=True)
         if os.path.exists(tmp_zip): os.remove(tmp_zip)
@@ -259,9 +250,10 @@ def process_single_tile(z, x, y):
     if not raw: return []
 
     new_features = []
-    
-    # math go brrr
     transformer = FastCoordinateTransformer(z, x, y)
+    
+    # tolerance for simplification
+    SIMPLIFY_TOL = 0.00005 
 
     # roads
     if 'transportation' in raw:
@@ -278,16 +270,25 @@ def process_single_tile(z, x, y):
             
             for line in geoms:
                 coords = []
-                # performance: use optimized transformer
                 for px, py in line:
                     mx, my = transformer.tile_to_mercator(px, py)
                     coords.append((mx, my))
+                
+                # simplification
+                if len(coords) > 2:
+                    coords = simplify_polyline(coords, SIMPLIFY_TOL)
+
                 if len(coords) > 1:
+                    xs = [p[0] for p in coords]
+                    ys = [p[1] for p in coords]
+                    bbox = (min(xs), min(ys), max(xs), max(ys))
+                    
                     new_features.append({
                         'type': 'road', 
                         'class': r_class, 
                         'name': name,
-                        'coords': coords
+                        'coords': coords,
+                        'bbox': bbox
                     })
 
     # buildings
@@ -303,8 +304,22 @@ def process_single_tile(z, x, y):
                     for px, py in ring:
                         mx, my = transformer.tile_to_mercator(px, py)
                         coords.append((mx, my))
+                    
+                    # simplification stuff i honestly don't udnerstand
+                    if len(coords) > 4:
+                        coords = simplify_polyline(coords, SIMPLIFY_TOL)
+                        
                     if len(coords) > 2:
-                        new_features.append({'type': 'building', 'coords': coords})
+                        # Pre-calculate BBox
+                        xs = [p[0] for p in coords]
+                        ys = [p[1] for p in coords]
+                        bbox = (min(xs), min(ys), max(xs), max(ys))
+
+                        new_features.append({
+                            'type': 'building', 
+                            'coords': coords,
+                            'bbox': bbox
+                        })
     
     # labels
     if 'place' in raw:
@@ -314,7 +329,14 @@ def process_single_tile(z, x, y):
                 if name:
                     px, py = f['geometry']['coordinates']
                     mx, my = transformer.tile_to_mercator(px, py)
-                    new_features.append({'type': 'label', 'name': name, 'coords': (mx, my)})
+                    # Point bbox is just the point
+                    bbox = (mx, my, mx, my)
+                    new_features.append({
+                        'type': 'label', 
+                        'name': name, 
+                        'coords': (mx, my),
+                        'bbox': bbox
+                    })
 
     return new_features
 
@@ -324,11 +346,6 @@ def fetch_tiles_background(data_obj, tiles_to_fetch):
         try:
             features = process_single_tile(z, x, y)
             data_obj.tile_manager.add_tile(z, x, y, features)
-            
-            # fix for freezing:
-            # sleep to release GIL hacks
             time.sleep(0.005)
-            
         except Exception as e:
-            # mark as done so we dont retry
             data_obj.tile_manager.add_tile(z, x, y, [])
