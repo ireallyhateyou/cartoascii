@@ -1,5 +1,6 @@
 # files for offline
 *.json
+*.pkl
 tile_cache/*
 
 # Byte-compiled / optimized / DLL files

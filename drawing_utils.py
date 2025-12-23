@@ -26,7 +26,7 @@ def get_line_char(dx, dy):
     abs_dx = abs(dx)
     abs_dy = abs(dy)
 
-    # pick ascii character
+    # pick ascii character based on slope
     if abs_dx > abs_dy * 3:
         return ord('-')
     elif abs_dy > abs_dx * 3:
@@ -70,7 +70,8 @@ def fill_poly_scanline(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, wi
         else:
             edges.append((p2[1], p1[1], p2[0], (p1[0] - p2[0]) / (p1[1] - p2[1])))
 
-    for y in range(max(0, min_y), min(height, max_y + 1), 2): # draw every 2nd line for hatching
+    # draw every 2nd line for hatching effect
+    for y in range(max(0, min_y), min(height, max_y + 1), 2): 
         intersections = []
         for y1, y2, x_start, slope in edges:
             if y1 <= y < y2:
@@ -84,14 +85,12 @@ def fill_poly_scanline(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, wi
             if x_end > 0 and x_start < width:
                 draw_line(stdscr, max(0, x_start), y, min(width-1, x_end), y, char_color)
 
-def draw_line(stdscr, x0, y0, x1, y1, char):
+def draw_line(stdscr, x0, y0, x1, y1, char_attr):
     # Bresenham's line algorithm
-    # https://www.cs.drexel.edu/~popyack/Courses/CSP/Fa18/notes/08.3_MoreGraphics/Bresenham.html?CurrentSlide=2
     height, width = stdscr.getmaxyx()
 
-    # dont go off boundaries
-    if (x0 < 0 and x1 < 0) or (x0 >= width and x1 >= width): return
-    if (y0 < 0 and y1 < 0) or (y0 >= height and y1 >= height): return
+    # ensure ints
+    x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
 
     dx = abs(x1 - x0)
     dy = abs(y1 - y0)
@@ -102,7 +101,7 @@ def draw_line(stdscr, x0, y0, x1, y1, char):
     while True:
         if 0 <= x0 < width and 0 <= y0 < height:
             try:
-                stdscr.addch(int(y0), int(x0), char)
+                stdscr.addch(y0, x0, char_attr)
             except curses.error:
                 pass
         if x0 == x1 and y0 == y1:
@@ -117,6 +116,7 @@ def draw_line(stdscr, x0, y0, x1, y1, char):
 
 def draw_projected_polyline(stdscr, coords_mx_my, cam_x, cam_y, zoom, aspect_ratio, width, height, char_color):
     screen_points = []
+    cx, cy = width // 2, height // 2
 
     # project to screnspace
     for mx, my in coords_mx_my:
@@ -124,8 +124,8 @@ def draw_projected_polyline(stdscr, coords_mx_my, cam_x, cam_y, zoom, aspect_rat
         tx = mx - cam_x
         ty = my - cam_y
         # to screen space
-        sx = (tx * zoom * aspect_ratio) + width // 2
-        sy = (-ty * zoom) + height // 2
+        sx = (tx * zoom * aspect_ratio) + cx
+        sy = (-ty * zoom) + cy
         
         screen_points.append((int(sx), int(sy)))
 
@@ -134,7 +134,7 @@ def draw_projected_polyline(stdscr, coords_mx_my, cam_x, cam_y, zoom, aspect_rat
         p1 = screen_points[i]
         p2 = screen_points[i+1]
         
-        # bounds check
+        # simple bounds check to save perf
         if (0 <= p1[0] < width and 0 <= p1[1] < height) or \
            (0 <= p2[0] < width and 0 <= p2[1] < height):
             draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char_color)
@@ -166,7 +166,7 @@ def simplify_polyline(coords_mx_my, tolerance_mx_my):
     return simplified
 
 
-# simplifcaiton
+# simplifcaiton helper for countries
 def draw_country_poly(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, width, height, color, simplify_tolerance=0.0):
     coords_to_draw = poly_coords
     # tolerance
@@ -182,7 +182,7 @@ def draw_country_poly(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, wid
         sy = (-ty * zoom) + cy
         screen_points.append((int(sx), int(sy)))
         
-    # draw lines
+    # draw lines loop
     for i in range(len(screen_points) - 1):
         p1 = screen_points[i]
         p2 = screen_points[i+1]

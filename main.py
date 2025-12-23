@@ -1,289 +1,207 @@
 import curses
-import math
 import time
 import threading
-import pandas as pd
-
-# internal modules
 from drawing_utils import *
-from map_data import *
+from map_data import mapData, load_initial_data, fetch_local_details
+
+def draw_progress_bar(stdscr, y, x, width, percent, message):
+    # helper for loading screen
+    bar_width = width - 4
+    filled = int(bar_width * (percent / 100.0))
+    bar = "[" + "#" * filled + "." * (bar_width - filled) + "]"
+    
+    stdscr.addstr(y, x, message, curses.color_pair(3))
+    stdscr.addstr(y + 1, x, bar, curses.color_pair(6))
 
 def main(stdscr):
     # set cursors up
-    curses.curs_set(0) 
-    stdscr.nodelay(True) 
-    stdscr.timeout(100)
+    curses.curs_set(0)
+    stdscr.nodelay(True)
+    stdscr.timeout(33) 
     curses.start_color()
 
     ## colours
-    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK) 
-    curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_BLACK) 
+    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK) 
+    curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_BLACK)
     curses.init_pair(4, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     curses.init_pair(6, curses.COLOR_BLUE, curses.COLOR_BLACK)
-    
+    curses.init_pair(7, curses.COLOR_BLACK, curses.COLOR_WHITE)
+    curses.init_pair(8, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+    curses.init_pair(9, curses.COLOR_WHITE, curses.COLOR_BLACK)
+
     # load datas
-    stdscr.addstr(0, 0, "Loading dataset... (this requires internet!!)")
-    stdscr.refresh()
-    
-    # multithreaded
-    projected_map = []
-    roads_data = []
     map_data = mapData()
-    loading_thread = threading.Thread(target=load_and_project_map, args=(map_data,))
-    loading_thread.daemon = True
-    loading_thread.start()
+    loader = threading.Thread(target=load_initial_data, args=(map_data,))
+    loader.daemon = True
+    loader.start()
 
     # camera and aspect ratio
-    cam_x = 0.0
-    cam_y = 0.0
+    cam_x, cam_y = 0.0, 0.0
     zoom = 1.0
-    aspect_ratio = 2.0 
-    # threads & cache
-    city_cache = {'bbox': None, 'cities': []}
-    fetch_cities_thread = None
-    fetch_local_thread = None
-    # movement detection for lazy loading
-    last_cam_x, last_cam_y = cam_x, cam_y
-    last_move_time = time.time()
-
     running = True
+    
+    # threads & cache
+    fetch_thread = None
+    last_fetch = 0
+    
     while running:
-        stdscr.clear()
         height, width = stdscr.getmaxyx()
         cx, cy = width // 2, height // 2
-       
-        # update movement timer
-        if cam_x != last_cam_x or cam_y != last_cam_y:
-            last_move_time = time.time()
-            last_cam_x, last_cam_y = cam_x, cam_y
         
-        if map_data.data_loaded and not projected_map:
-            projected_map = map_data.projected_map_full
-            roads_data = map_data.roads_data
-
-        # draw status bar if the data is not ready
+        # loading screen
         if not map_data.data_loaded:
-            stdscr.addstr(1, 0, "processing country borders...", curses.color_pair(3))
-            if map_data.error:
-                stdscr.addstr(2, 0, map_data.error, curses.color_pair(4))
+            stdscr.erase()
+            msg = f"{map_data.status} {int(map_data.progress)}%"
+            draw_progress_bar(stdscr, height//2, max(0, width//2 - 20), 40, map_data.progress, msg)
+            stdscr.refresh()
+            time.sleep(0.1)
+            continue
             
-            # keep the hud
-            info = f"Loading... | Pos: {cam_x:.1f}, {cam_y:.1f} | Zoom: {zoom:.1f} | Arr: Move | +/-: Zoom | q: Quit"
-            stdscr.addstr(0, 0, info, curses.color_pair(3))
+        # initial zoom jump
+        if zoom == 1.0 and map_data.countries_coords:
+            zoom = 1.5
 
-        if map_data.data_loaded:
-            # calculate the view's projected bounds (mx_min, my_min, etc.) ONCE
-            lon_span = width / (zoom * aspect_ratio)
-            proj_lat_span = height / zoom
-            
-            # projected bounds of the screen/view
-            view_mx_min = cam_x - lon_span / 2
-            view_mx_max = cam_x + lon_span / 2
-            view_my_min = cam_y - proj_lat_span / 2
-            view_my_max = cam_y + proj_lat_span / 2
+        stdscr.erase()
+        aspect_ratio = 2.0
+        
+        # helper to screen conversion
+        def to_screen(mx, my):
+            sx = ((mx - cam_x) * zoom * aspect_ratio) + cx
+            sy = (-(my - cam_y) * zoom) + cy
+            return int(sx), int(sy)
 
-            # high zoom level
-            if zoom >= 2000.0:
-                # avoid spamming api
-                if time.time() - last_move_time > 0.5:
-                    # calculate lat/long bounds
-                    lat_min = mercator_unproject(view_my_min)
-                    lat_max = mercator_unproject(view_my_max)
-                    # simple clamp for bbox
-                    bbox = (min(lat_min, lat_max), view_mx_min, max(lat_min, lat_max), view_mx_max)
-                    
-                    if fetch_local_thread is None or not fetch_local_thread.is_alive():
-                        fetch_local_thread = threading.Thread(target=fetch_local_details, args=(map_data, bbox))
-                        fetch_local_thread.daemon = True
-                        fetch_local_thread.start()
+        # world borders
+        simplify = 0.05 / zoom
+        for poly in map_data.projected_map_full:
+            draw_country_poly(stdscr, poly, cam_x, cam_y, zoom, aspect_ratio, width, height, curses.color_pair(1), simplify)
 
-            # fetch cities at zoom level
-            if zoom >= 3.0 and zoom < 2000.0:
-                try:
-                    # figure out the bounds in lat/long
-                    lon_span = width / (zoom * aspect_ratio)
-                    proj_lat_span = height / zoom
-                    lon_min = cam_x - lon_span / 2
-                    lon_max = cam_x + lon_span / 2
-                    proj_lat_min = cam_y - proj_lat_span / 2
-                    proj_lat_max = cam_y + proj_lat_span / 2
-                    
-                    lat_min = mercator_unproject(proj_lat_min)
-                    lat_max = mercator_unproject(proj_lat_max)
-
-                    # create a bounding box from this
-                    bbox = (lat_min, lon_min, lat_max, lon_max)
-                    last_bbox = city_cache['bbox']
-                    
-                    should_fetch = False
-                    if not last_bbox:
-                        should_fetch = True
-                    # check for movement between previous and current bbox
-                    elif any(abs(bbox[i] - last_bbox[i]) > 0.05 for i in range(4)): 
-                        should_fetch = True
-                    
-                    # launch thread if we should fetch a city
-                    if should_fetch and (fetch_cities_thread is None or not fetch_cities_thread.is_alive()):
-                        if fetch_cities_thread and fetch_cities_thread.is_alive():
-                            # pass if already alive
-                            pass
-                        else:
-                            fetch_cities_thread = threading.Thread(target=fetch_city_cache, args=(bbox, city_cache))
-                            fetch_cities_thread.daemon = True
-                            fetch_cities_thread.start()
-                except Exception:
-                    pass # ignore errors #thuglife
-
-        # draw hud
-        info = f"Pos: {cam_x:.1f}, {cam_y:.1f} | Zoom: {zoom:.1f} | Arr: Move | +/-: Zoom | q: Quit"
-        stdscr.addstr(0, 0, info, curses.color_pair(3))
-
-        simplify_tolerance_mx_my = 0.0 
-        if zoom < 5.0:
-            simplify_tolerance_mx_my = 0.05
-
-        # draw map
-        for name, polys, cx_map, cy_map, bbox_mx_min, bbox_my_min, bbox_mx_max, bbox_my_max in projected_map:
-            # culling check
-            if (bbox_mx_max < view_mx_min or 
-                bbox_mx_min > view_mx_max or 
-                bbox_my_max < view_my_min or 
-                bbox_my_min > view_my_max):
-                continue # skip
-            
-            # draw labels if zoomed
-            if zoom >= 1.5:
-                if view_mx_min <= cx_map <= view_mx_max and view_my_min <= cy_map <= view_my_max:
-                    # centroid to screenspace
-                    tx_center = cx_map - cam_x
-                    ty_center = cy_map - cam_y 
-                    sx_center = (tx_center * zoom * aspect_ratio) + cx
-                    sy_center = (-ty_center * zoom) + cy
-                    
-                    # draw name within bounds
-                    if 0 <= sx_center < width - len(name) and 0 <= sy_center < height:
-                        try:
-                            stdscr.addstr(int(sy_center), int(sx_center), name, curses.color_pair(2))
-                        except curses.error:
-                            pass 
-
-            for poly in polys:
-                draw_country_poly(stdscr, poly, cam_x, cam_y, 
-                        zoom, aspect_ratio, width, height, 
-                        curses.color_pair(1), 
-                        simplify_tolerance_mx_my)
+        # naturalearth roads
+        if map_data.roads_data and zoom > 5.0 and zoom < 1000.0:
+            for road in map_data.roads_data:
+                bx1, by1, bx2, by2 = road['bbox']
+                # culling
+                if (bx2 < cam_x - width/zoom or bx1 > cam_x + width/zoom or
+                    by2 < cam_y - height/zoom or by1 > cam_y + height/zoom): continue
                 
-        # draw roads     
-        if zoom >= 5.0 and zoom < 2000.0 and roads_data:
-            road_color = curses.color_pair(6)
-            for road in roads_data:
-                # get bbox
-                min_mx, min_my, max_mx, max_my = road['bbox'] 
-                
-                # skip if it doesnt match our bbox
-                if max_mx < view_mx_min or min_mx > view_mx_max or \
-                   max_my < view_my_min or min_my > view_my_max:
-                    continue
-                
-                # highlight important roads
-                char = ord('.') if zoom >= 10 else ord(' ')
-                if road['type'] in ['Major Highway', 'Secondary Highway', 'State Highway']:
-                    char = ord('#')
-                
-                draw_projected_polyline(stdscr, road['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, char | road_color)
-            
-        # draw features
-        if zoom >= 500.0:
-            for feat in map_data.local_features:
-                if feat['type'] == 'building':
-                    # draw buildings 
-                    color = curses.color_pair(3) 
-                    fill_poly_scanline(stdscr, feat['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, ord('/') | color)
-                    # draw outline
-                    draw_projected_polyline(stdscr, feat['coords'] + [feat['coords'][0]], cam_x, cam_y, zoom, aspect_ratio, width, height, ord('#') | color)
-                elif feat['type'] == 'park':
-                    # green fill
-                    color = curses.color_pair(1)
-                    fill_poly_scanline(stdscr, feat['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, ord('.') | color)
-                elif feat['type'] == 'poi':
-                    # draw POI
-                    mx, my = feat['coords'][0]
-                    tx = mx - cam_x
-                    ty = my - cam_y
-                    sx = int((tx * zoom * aspect_ratio) + cx)
-                    sy = int((-ty * zoom) + cy)
+                # use drawing_utils implementation
+                draw_projected_polyline(stdscr, road['geom'], cam_x, cam_y, zoom, aspect_ratio, width, height, ord('.') | curses.color_pair(5))
+
+        # fetch features 
+        with map_data.lock:
+            local_feats = list(map_data.local_features)
+
+        # buildings
+        if zoom > 800:
+            for f in local_feats:
+                if f['type'] == 'building':
+                    # outline
+                    draw_projected_polyline(stdscr, f['coords'] + [f['coords'][0]], cam_x, cam_y, zoom, aspect_ratio, width, height, curses.ACS_CKBOARD | curses.color_pair(9))
+
+        # local roads
+        if zoom > 300:
+            for f in local_feats:
+                if f['type'] == 'road':
+                    pts = [to_screen(*pt) for pt in f['coords']]
                     
-                    if 0 <= sx < width and 0 <= sy < height:
-                        subtype = feat['subtype']
-                        symbol = '?'
-                        if subtype in ['cafe', 'restaurant', 'bar', 'pub', 'fast_food']: symbol = 'C'
-                        elif subtype in ['bank', 'atm', 'bureau_de_change']: symbol = '$'
-                        elif subtype in ['school', 'university']: symbol = 'S'
-                        elif subtype == 'parking': symbol = 'P'
-                        elif subtype == 'cinema': symbol = 'M'
-                        elif subtype == 'pharmacy': symbol = '+'
-                        
-                        try:
-                            stdscr.addch(sy, sx, ord(symbol) | curses.color_pair(5) | curses.A_BOLD)
-                            # show name if there is space
-                            # THIS IS BUGGY ASF
-                            #if feat['name'] and zoom > 150:
-                            #    stdscr.addstr(sy, sx+2, feat['name'][:15], curses.color_pair(5))
+                    is_major = f['class'] in ['motorway', 'trunk', 'primary']
+                    char = ord('#') if is_major else ord('.')
+                    attr = curses.color_pair(8)|curses.A_BOLD if is_major else curses.color_pair(5)
+                    
+                    # draw line
+                    draw_projected_polyline(stdscr, f['coords'], cam_x, cam_y, zoom, aspect_ratio, width, height, char | attr)
+                    
+                    # name
+                    if zoom > 1500 and f.get('name') and len(pts) > 1:
+                        mid = pts[len(pts)//2]
+                        if 0 <= mid[1] < height and 0 <= mid[0] < width - len(f['name']):
+                            try: stdscr.addstr(mid[1], mid[0], f['name'], curses.color_pair(5)|curses.A_DIM)
+                            except: pass
+
+        # draw cities, settlemnts, and the like
+        pop_cutoff = 0
+        if zoom < 8.0: pop_cutoff = 1_000_000
+        elif zoom < 30.0: pop_cutoff = 100_000
+        elif zoom < 100.0: pop_cutoff = 10_000
+        else: pop_cutoff = 0 
+
+        if map_data.countries_coords:
+            for city in map_data.countries_coords:
+                if city['pop'] < pop_cutoff: continue
+                
+                sx, sy = to_screen(*city['coords'])
+                
+                # bounds checko
+                if 0 <= sy < height and 0 <= sx < width:
+                    marker = '·'
+                    marker_attr = curses.color_pair(3) | curses.A_DIM
+                    label_attr = curses.color_pair(3) | curses.A_DIM
+                    
+                    # city marker based on population.
+                    if city['pop'] >= 1_000_000:
+                        marker = '◆' 
+                        marker_attr = curses.color_pair(4) | curses.A_BOLD 
+                        label_attr = curses.color_pair(3) | curses.A_BOLD
+                    elif city['pop'] >= 100_000:
+                        marker = '●'
+                        marker_attr = curses.color_pair(4) 
+                        label_attr = curses.color_pair(3) | curses.A_BOLD
+                    elif city['pop'] >= 10_000:
+                        marker = 'o'
+                        marker_attr = curses.color_pair(3) | curses.A_BOLD 
+                        label_attr = curses.color_pair(3)
+
+                    try:
+                        stdscr.addstr(sy, sx, marker, marker_attr)
+                        # cull label if offscreen
+                        if sx + 2 + len(city['name']) < width:
+                            stdscr.addstr(sy, sx+2, city['name'], label_attr)
+                    except: pass
+
+        # local labels
+        if zoom > 1000:
+            for f in local_feats:
+                if f['type'] == 'label':
+                    sx, sy = to_screen(*f['coords'])
+                    if 0 <= sy < height and 0 <= sx < width:
+                        try: stdscr.addstr(sy, sx, f['name'], curses.color_pair(2))
                         except: pass
 
-        # draw cities when there are cities to draw
-        cities_to_draw = city_cache['cities'] if zoom >= 3.0 and zoom < 2000.0 else []
-        if cities_to_draw:
-            city_point_color = curses.color_pair(4) if curses.COLORS >= 5 else curses.color_pair(1)
-            city_name_color = curses.color_pair(5) if curses.COLORS >= 5 else curses.color_pair(2)
-            for city in cities_to_draw:
-                lat, lon = city['lat'], city['lon']
-                name = city['name']
-                
-                # project coords to lat, long
-                tx, ty = mercator_project(lat, lon)
-                
-                # convert to screen coordinates
-                sx = ((tx - cam_x) * zoom * aspect_ratio) + cx
-                sy = (-(ty - cam_y) * zoom) + cy
-                
-                # print cities
-                if 0 <= int(sy) < height and 0 <= int(sx) < width:
-                    if name != "Bir Lehlou": # trying not to go to jail pt2
-                        start_x = int(sx) + 1
-                        end_x = start_x + len(name)
-                        if start_x < width and end_x < width: # bounds checko
-                            stdscr.addch(int(sy), int(sx), ord('*') | city_point_color)
-                            stdscr.addstr(int(sy), min(width - 1, int(sx) + 1), name, city_name_color)
+        # draw hud
+        hud = f"POS: {cam_x:.2f}, {cam_y:.2f} | ZOOM: {zoom:.1f}x"
+        stdscr.addstr(0, 0, hud, curses.color_pair(7))
+        stdscr.refresh()
 
-        # TODO: show city detail after zoom level >= 100 
+        # handle input and controls
+        try: k = stdscr.getch()
+        except: k = -1
         
-        # handle input
-        try:
-            key = stdscr.getch()
-        except:
-            key = -1
-        ## process input
-        if key == ord('q'):
-            running = False
-        elif key == curses.KEY_RIGHT:
-            cam_x += 10 / zoom
-        elif key == curses.KEY_LEFT:
-            cam_x -= 10 / zoom
-        elif key == curses.KEY_UP:
-            cam_y += 10 / zoom
-        elif key == curses.KEY_DOWN:
-            cam_y -= 10 / zoom
-        elif key == ord('=') or key == ord('+'):
-            zoom *= 1.1
-        elif key == ord('-') or key == ord('_'):
-            zoom /= 1.1
+        spd = 20.0/zoom
+        if k == ord('q'): running = False
+        elif k == curses.KEY_RIGHT: cam_x += spd
+        elif k == curses.KEY_LEFT: cam_x -= spd
+        elif k == curses.KEY_UP: cam_y += spd
+        elif k == curses.KEY_DOWN: cam_y -= spd
+        elif k in [ord('='), 43]: zoom *= 1.2
+        elif k in [ord('-'), 95]: zoom /= 1.2
 
-        # wrap around
-        if cam_x > 180: cam_x -= 360
-        if cam_x < -180: cam_x += 360
+        # fetch tiles
+        if zoom > 300:
+            now = time.time()
+            if (fetch_thread is None or not fetch_thread.is_alive()) and (now - last_fetch > 0.5):
+                last_fetch = now
+                lat_min = mercator_unproject(cam_y - (height/2)/zoom)
+                lat_max = mercator_unproject(cam_y + (height/2)/zoom)
+                w_deg = (width/2)/(zoom*aspect_ratio)
+                
+                # thuglife error handling inside the thread function usually
+                fetch_thread = threading.Thread(target=fetch_local_details, 
+                                              args=(map_data, (cam_x-w_deg, lat_min, cam_x+w_deg, lat_max), zoom))
+                fetch_thread.daemon = True
+                fetch_thread.start()
+
+    curses.endwin()
 
 if __name__ == "__main__":
     curses.wrapper(main)
