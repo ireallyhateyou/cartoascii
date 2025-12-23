@@ -154,7 +154,7 @@ def draw_line(stdscr, x0, y0, x1, y1, char_attr):
             y0 += sy
 
 def draw_line_braille(buffer, x0, y0, x1, y1, color):
-    # Bresenham's algorithm adapted for the buffer
+    # bresenham adapted for the buffer
     x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
     
     dx = abs(x1 - x0)
@@ -176,8 +176,11 @@ def draw_line_braille(buffer, x0, y0, x1, y1, color):
             y0 += sy
 
 def fill_poly_braille(buffer, poly_coords, cam_x, cam_y, zoom, aspect_ratio, width, height, color):
+    # standard scanline fill
+    # map "screen space" to "pixel space" (x2 for x, x4 for y)
     pixel_poly = []
     
+    # calc center in pixels
     px_width = width 
     px_height = height
     cx, cy = px_width // 2, px_height // 2
@@ -187,8 +190,8 @@ def fill_poly_braille(buffer, poly_coords, cam_x, cam_y, zoom, aspect_ratio, wid
     for mx, my in poly_coords:
         tx = mx - cam_x
         ty = my - cam_y
-        sx = int((tx * zoom * aspect_ratio * 2) + cx) 
-        sy = int((-ty * zoom * 4) + cy) 
+        sx = int((tx * zoom * aspect_ratio * 2) + cx) # x2 braille width
+        sy = int((-ty * zoom * 4) + cy)               # x4 braille height
         pixel_poly.append((sx, sy))
         if 0 <= sy < px_height:
             min_y = min(min_y, sy)
@@ -221,7 +224,7 @@ def fill_poly_braille(buffer, poly_coords, cam_x, cam_y, zoom, aspect_ratio, wid
             x_start = int(intersections[i])
             x_end = int(intersections[i+1])
             if x_end > 0 and x_start < px_width:
-                # horizontal line drawing
+                # optimized horiz drawing
                 for x in range(max(0, x_start), min(px_width, x_end)):
                     buffer.set_pixel(x, y, color)
 
@@ -240,7 +243,7 @@ def draw_projected_polyline_braille(buffer, coords, cam_x, cam_y, zoom, aspect_r
         p1 = screen_points[i]
         p2 = screen_points[i+1]
         
-        # bounds check
+        # bounds
         if (0 <= p1[0] < width or 0 <= p1[1] < height):
              draw_line_braille(buffer, p1[0], p1[1], p2[0], p2[1], color)
 
