@@ -113,10 +113,7 @@ def get_route(start_lon, start_lat, end_lon, end_lat, profile="driving-car"):
         instructions = []
 
         if 'features' in data and data['features']:
-            # get the line bits
             geometry = data['features'][0]['geometry']['coordinates']
-            
-            # try to grab the text bits
             try:
                 # openrouteservice structure features -> props -> segments -> steps
                 segments = data['features'][0]['properties']['segments']

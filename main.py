@@ -42,7 +42,7 @@ def main(stdscr):
     running = True
     buffer = None
     never_moved = True
-    
+
     # ui state
     instruction_page = 0
     show_instructions = False
@@ -105,7 +105,7 @@ def main(stdscr):
              buffer = BrailleBuffer(width * 2, height * 4)
         buffer.clear()
         
-        # 1. loading screen
+        # loading screen
         if not map_data.data_loaded:
             stdscr.erase()
             msg = f"{map_data.status} {int(map_data.progress)}%"
