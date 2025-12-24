@@ -41,6 +41,7 @@ def main(stdscr):
     zoom = 1.0
     running = True
     buffer = None
+    never_moved = True
     
     # ui state
     instruction_page = 0
@@ -356,6 +357,9 @@ def main(stdscr):
 
         # --- hud & status bar ---
         status_text = f" [f] route  [j] jump  [c] clear  [q] quit "
+        if never_moved: 
+            status_text += "| [+/-] zoom, arrows to move "
+        
         if map_data.route_poly:
             status_text += f"| mode: {map_data.active_mode.lower()}" 
         
@@ -395,12 +399,24 @@ def main(stdscr):
         
         spd = 10 / zoom
         if k == ord('q'): running = False
-        elif k == curses.KEY_RIGHT: cam_x += spd
-        elif k == curses.KEY_LEFT: cam_x -= spd
-        elif k == curses.KEY_UP: cam_y += spd
-        elif k == curses.KEY_DOWN: cam_y -= spd
-        elif k in [ord('='), 43]: zoom *= 1.2
-        elif k in [ord('-'), 95]: zoom /= 1.2
+        elif k == curses.KEY_RIGHT: 
+            cam_x += spd
+            never_moved = False
+        elif k == curses.KEY_LEFT: 
+            cam_x -= spd
+            never_moved = False
+        elif k == curses.KEY_UP: 
+            cam_y += spd
+            never_moved = False
+        elif k == curses.KEY_DOWN: 
+            cam_y -= spd
+            never_moved = False
+        elif k in [ord('='), 43]: 
+            zoom *= 1.2
+            never_moved = False
+        elif k in [ord('-'), 95]: 
+            zoom /= 1.2
+            never_moved = False
         
         elif k == curses.KEY_MOUSE:
             try:
