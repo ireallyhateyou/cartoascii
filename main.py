@@ -355,9 +355,9 @@ def main(stdscr):
             except: pass
 
         # --- hud & status bar ---
-        status_text = f" [F] ROUTE  [J] JUMP  [C] CLEAR  [Q] QUIT "
+        status_text = f" [f] route  [j] jump  [c] clear  [q] quit "
         if map_data.route_poly:
-            status_text += f"| MODE: {map_data.active_mode} | [X] INST."
+            status_text += f"| mode: {map_data.active_mode.lower()}" 
         
         try:
             stdscr.attron(curses.color_pair(7))
@@ -370,15 +370,15 @@ def main(stdscr):
         except curses.error:
             pass
         
-        # location dispaly
+        # location display
         with map_data.address_lock:
             if map_data.current_address:
                 addr_txt = f" {map_data.current_address} "
                 if len(addr_txt) < width - len(status_text) - 2:
                     try:
-                        # Draw at width - length - 1 (Safety margin)
+                        # draw at bottom right
                         x_pos = width - len(addr_txt) - 1
-                        stdscr.addstr(height - 1, x_pos, addr_txt, curses.color_pair(7) | curses.A_BOLD)
+                        stdscr.addstr(height - 1, x_pos, addr_txt, curses.color_pair(7))
                     except curses.error:
                         pass
         

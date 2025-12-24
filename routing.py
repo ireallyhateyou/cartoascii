@@ -28,8 +28,13 @@ def geocode_address(address_str):
         
     return None
 
-def reverse_geocode(lon, lat):
-    # get address from coords
+def reverse_geocode(lon, lat, view_zoom=1.0):
+    osm_zoom = 3
+    if view_zoom > 1500: osm_zoom = 18
+    elif view_zoom > 500: osm_zoom = 16
+    elif view_zoom > 50: osm_zoom = 12
+    elif view_zoom > 5: osm_zoom = 10
+    
     url = "https://nominatim.openstreetmap.org/reverse"
     headers = {
         'User-Agent': 'cartoascii/1.0 (test@nasa.gov)' 
@@ -39,19 +44,50 @@ def reverse_geocode(lon, lat):
         'lat': lat,
         'lon': lon,
         'format': 'json',
-        'zoom': 18
+        'zoom': osm_zoom,
+        'addressdetails': 1
     }
     
     try:
         r = requests.get(url, params=params, headers=headers, timeout=5)
         r.raise_for_status()
         data = r.json()
-        if 'display_name' in data:
-            # simplify the address a bit
-            addr = data['display_name']
-            parts = addr.split(',')
-            # return first 3 parts usually enough
-            return ", ".join(parts[:3])
+        
+        if 'address' in data:
+            a = data['address']
+            parts = []
+                        
+            # based on zoom depth
+            if osm_zoom >= 16:
+                if 'house_number' in a: parts.append(a['house_number'])
+                if 'road' in a: parts.append(a['road'])
+                elif 'pedestrian' in a: parts.append(a['pedestrian'])
+            
+            if osm_zoom >= 10:
+                if 'suburb' in a: parts.append(a['suburb'])
+                elif 'city_district' in a: parts.append(a['city_district'])
+                elif 'neighbourhood' in a: parts.append(a['neighbourhood'])
+                
+                if 'city' in a: parts.append(a['city'])
+                elif 'town' in a: parts.append(a['town'])
+                
+            if osm_zoom < 10:
+                if 'state' in a: parts.append(a['state'])
+                if 'country' in a: parts.append(a['country'])
+            
+            if not parts and 'display_name' in data:
+                return data['display_name'].split(',')[0]
+            
+            # dedup and join
+            clean = []
+            seen = set()
+            for p in parts:
+                if p not in seen:
+                    clean.append(p)
+                    seen.add(p)
+                    
+            return ", ".join(clean)
+            
     except Exception as e:
         pass
         
