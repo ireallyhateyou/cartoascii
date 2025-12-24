@@ -64,10 +64,17 @@ class mapData:
         self.data_loaded = False
         self.status = "Initializing..."
         self.progress = 0.0
+        
+        # routing stuff
         self.start_marker = None 
         self.end_marker = None   
         self.route_poly = []     
-        self.route_instructions = [] # keeping the text here
+        self.route_instructions = [] 
+        self.active_mode = "VIEW" 
+
+        # reverse geo
+        self.current_address = ""
+        self.address_lock = threading.Lock()
 
         self.tile_manager = TileManager()
         self.fetch_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -264,7 +271,19 @@ def process_single_tile(z, x, y):
             name = props.get('name', '') 
             
             if r_class in ['path', 'track']: continue
+            
+            # color based on type of road
+            road_color = 2
+            road_priority = 2
 
+            if r_class in ['primary', 'secondary']:
+                road_color = 3
+                road_priority = 3
+            
+            elif r_class in ['motorway', 'trunk']:
+                road_color = 5
+                road_priority = 4
+            
             geoms = f['geometry']['coordinates']
             if f['geometry']['type'] == 'LineString': geoms = [geoms]
             elif f['geometry']['type'] != 'MultiLineString': continue
@@ -286,7 +305,9 @@ def process_single_tile(z, x, y):
                     
                     new_features.append({
                         'type': 'road', 
-                        'class': r_class, 
+                        'class': r_class,
+                        'color_idx': road_color,
+                        'z_index': road_priority,
                         'name': name, 
                         'coords': coords,
                         'bbox': bbox
@@ -306,7 +327,7 @@ def process_single_tile(z, x, y):
                         mx, my = transformer.tile_to_mercator(px, py)
                         coords.append((mx, my))
                     
-                    # simplification stuff i honestly don't udnerstand
+                    # simplification stuff 
                     if len(coords) > 4:
                         coords = simplify_polyline(coords, SIMPLIFY_TOL)
                         
@@ -322,14 +343,14 @@ def process_single_tile(z, x, y):
                             'bbox': bbox
                         })
     
-    # 1. Place Layer (Cities, Towns, etc)
+    # cities, towns, settlements
     if 'place' in raw:
         for f in raw['place']['features']:
             if f['geometry']['type'] == 'Point':
                 props = f['properties']
                 cls = props.get('class', '')
                 
-                # filter out suburbs/neighborhoods unless zoomed in deep (not handled here but good practice)
+                # filter out suburbs/neighborhoods unless zoomed in deep
                 if cls in ['neighbourhood', 'suburb', 'block']: continue
                 
                 name = sanitize_label(props)
@@ -345,18 +366,16 @@ def process_single_tile(z, x, y):
                         'bbox': bbox
                     })
 
-    # 2. POI Layer
+    # places of interests
     if 'poi' in raw:
-        # Important categories
         ALLOWED_POI = ['hospital', 'university', 'college', 'school', 'park', 'stadium', 'town_hall', 'attraction', 'museum']
         
         for f in raw['poi']['features']:
             props = f['properties']
             cls = props.get('class', '')
             sub = props.get('subclass', '')
-            rank = props.get('rank', 100) # Default to 100 (low importance)
+            rank = props.get('rank', 100) 
             
-            # Filter: Keep if Rank is high (low number) OR it's a critical category
             if rank <= 10 or cls in ALLOWED_POI or sub in ALLOWED_POI:
                 name = sanitize_label(props)
                 if name:
@@ -366,7 +385,7 @@ def process_single_tile(z, x, y):
                     new_features.append({
                         'type': 'label',
                         'name': name,
-                        'rank': 10, # Medium priority
+                        'rank': 10, 
                         'coords': (mx, my),
                         'bbox': bbox
                     })

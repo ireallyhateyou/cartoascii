@@ -28,8 +28,38 @@ def geocode_address(address_str):
         
     return None
 
-def get_route(start_lon, start_lat, end_lon, end_lat):
-    url = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
+def reverse_geocode(lon, lat):
+    # get address from coords
+    url = "https://nominatim.openstreetmap.org/reverse"
+    headers = {
+        'User-Agent': 'cartoascii/1.0 (test@nasa.gov)' 
+    }
+    
+    params = {
+        'lat': lat,
+        'lon': lon,
+        'format': 'json',
+        'zoom': 18
+    }
+    
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=5)
+        r.raise_for_status()
+        data = r.json()
+        if 'display_name' in data:
+            # simplify the address a bit
+            addr = data['display_name']
+            parts = addr.split(',')
+            # return first 3 parts usually enough
+            return ", ".join(parts[:3])
+    except Exception as e:
+        pass
+        
+    return None
+
+def get_route(start_lon, start_lat, end_lon, end_lat, profile="driving-car"):
+    # profiles: driving-car, foot-walking, cycling-regular
+    url = f"https://api.openrouteservice.org/v2/directions/{profile}/geojson"
     headers = {
         'Authorization': apikey,
         'Content-Type': 'application/json; charset=utf-8'
@@ -52,7 +82,7 @@ def get_route(start_lon, start_lat, end_lon, end_lat):
             
             # try to grab the text bits
             try:
-                # openrouteservice structure is usually features -> props -> segments -> steps
+                # openrouteservice structure features -> props -> segments -> steps
                 segments = data['features'][0]['properties']['segments']
                 for seg in segments:
                     for step in seg['steps']:

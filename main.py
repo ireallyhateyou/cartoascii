@@ -26,9 +26,9 @@ def main(stdscr):
     curses.init_pair(4, curses.COLOR_RED, -1)
     curses.init_pair(5, curses.COLOR_YELLOW, -1)
     curses.init_pair(6, curses.COLOR_BLUE, -1)
-    curses.init_pair(7, curses.COLOR_BLACK, curses.COLOR_WHITE) # Debug/Header
+    curses.init_pair(7, curses.COLOR_BLACK, curses.COLOR_WHITE)
     curses.init_pair(8, curses.COLOR_MAGENTA, -1)
-    curses.init_pair(9, curses.COLOR_WHITE, curses.COLOR_BLACK) # Instruction bg
+    curses.init_pair(9, curses.COLOR_WHITE, curses.COLOR_BLACK)
 
     # init data
     map_data = mapData()
@@ -44,20 +44,57 @@ def main(stdscr):
     
     # ui state
     instruction_page = 0
-    show_instructions = False  # <--- Added toggle state
+    show_instructions = False
     label_manager = None
     
+    # routing profiles
+    routing_profiles = ["driving-car", "foot-walking", "cycling-regular"]
+    routing_names = ["Car (Driving)", "Walk (Foot)", "Bike (Cycling)"]
+    
+    # address fetching state
+    last_cam_pos = (0, 0)
+    last_move_time = time.time()
+    
+    # background address fetcher
+    def address_worker():
+        while running:
+            time.sleep(1.0) # check every second
+            
+            # only fetch if user stopped moving for 1s
+            now = time.time()
+            if (cam_x, cam_y) == last_cam_pos:
+                if now - last_move_time > 1.0:
+                    # fetch
+                    try:
+                        # better precision unproject
+                        r_lon, r_lat = tile_coords_to_lonlat(0, 0, 0, cam_x, cam_y, extent=1.0)
+                        
+                        addr = routing.reverse_geocode(r_lon, r_lat)
+                        if addr:
+                            with map_data.address_lock:
+                                map_data.current_address = addr
+                    except: pass
+            else:
+                pass
+                
+    addr_thread = threading.Thread(target=address_worker)
+    addr_thread.daemon = True
+    addr_thread.start()
+
     # render loop state
     last_tile_check = 0
-    fps = 0
-    frame_count = 0
-    last_fps_time = time.time()
     
     while running:
         loop_start = time.time()
-        
         height, width = stdscr.getmaxyx()
         cx, cy = width // 2, height // 2
+        
+        # track movement for address fetcher
+        if (cam_x, cam_y) != last_cam_pos:
+            last_cam_pos = (cam_x, cam_y)
+            last_move_time = time.time()
+            with map_data.address_lock:
+                map_data.current_address = "..." # clear old address while moving
         
         total_pages = 0
         label_manager = LabelManager(width, height)
@@ -89,10 +126,9 @@ def main(stdscr):
             sy = (-(my - cam_y) * zoom) + cy
             return int(sx), int(sy)
         
-        # inverse for mouse
         def from_screen(sx, sy):
             mx = cam_x + (sx - cx) / (zoom * aspect_ratio)
-            my = cam_y - (sy - cy) / zoom # remember y is flipped
+            my = cam_y - (sy - cy) / zoom 
             return mx, my
 
         # viewport calc
@@ -103,36 +139,38 @@ def main(stdscr):
 
         try:
             # --- draw global borders ---
-            for item in map_data.projected_map_full:
-                bx1, by1, bx2, by2 = item['bbox']
-                if (bx2 < min_cam_x or bx1 > max_cam_x or
-                    by2 < min_cam_y or by1 > max_cam_y): continue
-                draw_projected_polyline_braille(buffer, item['geom'], cam_x, cam_y, zoom, aspect_ratio, 
-                    buffer.width, buffer.height, 1) 
+            if zoom < 80.0:
+                for item in map_data.projected_map_full:
+                    bx1, by1, bx2, by2 = item['bbox']
+                    if (bx2 < min_cam_x or bx1 > max_cam_x or
+                        by2 < min_cam_y or by1 > max_cam_y): continue
+                    draw_projected_polyline_braille(buffer, item['geom'], cam_x, cam_y, zoom, aspect_ratio, 
+                        buffer.width, buffer.height, 1, z_index=1) 
                         
             # --- draw global roads ---
-            if map_data.roads_data and 5.0 < zoom < 30.0:
+            if map_data.roads_data and 5.0 < zoom < 50.0:
                 for road in map_data.roads_data:
                     bx1, by1, bx2, by2 = road['bbox']
                     if (bx2 < min_cam_x or bx1 > max_cam_x or
                         by2 < min_cam_y or by1 > max_cam_y): continue
                     
+                    # Global Highways = High Priority (4)
                     draw_projected_polyline_braille(buffer, road['geom'], cam_x, cam_y, zoom, aspect_ratio, 
-                        buffer.width, buffer.height, 5)
+                        buffer.width, buffer.height, 5, z_index=4)
 
             # route post-routing
             if map_data.route_poly:
+                # Route Line = Max Priority (8)
                 draw_projected_polyline_braille(buffer, map_data.route_poly, cam_x, cam_y, zoom, aspect_ratio,
-                                              buffer.width, buffer.height, 8) 
+                                              buffer.width, buffer.height, 8, z_index=8) 
 
-            # start marker
+            # markers
             if map_data.start_marker:
                 sx, sy = to_screen(*map_data.start_marker)
                 if 0 <= sx < width and 0 <= sy < height:
                     try: stdscr.addstr(sy, sx, "O", curses.color_pair(1) | curses.A_BOLD)
                     except: pass
 
-            # end marker
             if map_data.end_marker:
                 sx, sy = to_screen(*map_data.end_marker)
                 if 0 <= sx < width and 0 <= sy < height:
@@ -144,7 +182,6 @@ def main(stdscr):
             
             if zoom > 20.0:
                 tile_z = 14 if zoom > 1500 else 12
-                # Lower Z for earlier levels
                 if zoom < 100: tile_z = 8
                 
                 lat_min = mercator_unproject(min_cam_y)
@@ -154,7 +191,6 @@ def main(stdscr):
                 visible_tiles = tiles_for_bbox(min_cam_x - pad_x, lat_min, max_cam_x + pad_x, lat_max, tile_z)
                 missing_tiles = []
                 
-                # draw visible
                 for z, x, y in visible_tiles:
                     tile_features = map_data.tile_manager.get_tile(z, x, y)
                     
@@ -164,26 +200,35 @@ def main(stdscr):
                             map_data.tile_manager.mark_fetching(z, x, y)
                     else:
                         for f in tile_features:
-                            # more culling
                             fb = f['bbox']
                             if (fb[2] < min_cam_x or fb[0] > max_cam_x or
                                 fb[3] < min_cam_y or fb[1] > max_cam_y):
                                 continue
 
                             if f['type'] == 'building' and zoom > 800:
-                                fill_poly_braille(buffer, f['coords'], cam_x, cam_y, zoom, aspect_ratio, 
-                                                buffer.width, buffer.height, 2)
+                                coords = f['coords']
+                                if coords[0] != coords[-1]:
+                                    coords = coords + [coords[0]]
+                                # Buildings = Z-index 2
+                                draw_projected_polyline_braille(buffer, coords, cam_x, cam_y, zoom, aspect_ratio, 
+                                    buffer.width, buffer.height, 2, z_index=2)
+                                    
                             elif f['type'] == 'road':
+                                # Roads use stored Z-index (2, 3 or 4)
+                                c_idx = f.get('color_idx', 2)
+                                z_idx = f.get('z_index', 2)
+                                
                                 draw_projected_polyline_braille(buffer, f['coords'], cam_x, cam_y, zoom, aspect_ratio, 
-                                                              buffer.width, buffer.height, 1)
+                                                              buffer.width, buffer.height, c_idx, z_index=z_idx)
+                                
                                 if zoom > 1500 and f.get('name'):
                                     labels_to_draw.append(f)
+                                    
                             elif f['type'] == 'label':
                                 labels_to_draw.append(f)
 
-                # trigger fetch (debounced)
+                # trigger fetch
                 now = time.time()
-                # only fetch if we aren't lagging (frame time < 100ms)
                 if missing_tiles and (now - last_tile_check > 0.2) and (now - loop_start < 0.1):
                     last_tile_check = now
                     map_data.fetch_executor.submit(fetch_tiles_background, map_data, missing_tiles)
@@ -217,7 +262,7 @@ def main(stdscr):
         elif zoom < 30.0: pop_cutoff = 100_000
         elif zoom < 100.0: pop_cutoff = 10_000
 
-        if map_data.countries_coords:
+        if map_data.countries_coords and zoom < 150.0:
             for city in map_data.countries_coords:
                 if city['pop'] < pop_cutoff: break 
                 sx, sy = to_screen(*city['coords'])
@@ -231,7 +276,6 @@ def main(stdscr):
                         marker = '●'
                         marker_attr = curses.color_pair(4) 
                     try:
-                        # Collision check for Cities
                         name_len = len(city['name'])
                         if label_manager.can_draw(sx, sy, name_len + 2):
                             stdscr.addstr(sy, sx, marker, marker_attr)
@@ -240,7 +284,7 @@ def main(stdscr):
                             label_manager.register(sx, sy, name_len + 2)
                     except: pass
 
-        # tile labels + colliusion
+        # tile labels
         if zoom > 20:
             labels_to_draw.sort(key=lambda x: x.get('rank', 99))
             
@@ -278,15 +322,12 @@ def main(stdscr):
                     stdscr.addch(row, sb_x, '|', curses.color_pair(3))
                 except: pass
             
-            # calculate paging
             total_items = len(map_data.route_instructions)
             max_lines = max(1, height - 6) 
             total_pages = (total_items + max_lines - 1) // max_lines
             
-            # safety reset if data changed significantly
             if instruction_page >= total_pages: instruction_page = 0
             
-            # header
             try:
                 title = "INSTRUCTIONS"
                 if total_pages > 1:
@@ -296,7 +337,6 @@ def main(stdscr):
                 stdscr.addstr(2, sb_x + 2, "-" * (sb_width - 4), curses.color_pair(3))
             except: pass
             
-            # text steps (sliced)
             start_idx = instruction_page * max_lines
             end_idx = start_idx + max_lines
             current_slice = map_data.route_instructions[start_idx:end_idx]
@@ -311,19 +351,42 @@ def main(stdscr):
                     stdscr.addstr(3 + i, sb_x + 2, f"{start_idx + i + 1}. {txt}", curses.color_pair(3))
                 except: pass
             
-            # footer hint
             try: stdscr.addstr(height - 2, sb_x + 2, "[ p ] page [ x ] hide", curses.color_pair(5)|curses.A_DIM)
             except: pass
 
-        # hud
-        frame_count += 1
-        if time.time() - last_fps_time > 1.0:
-            fps = frame_count
-            frame_count = 0
-            last_fps_time = time.time()
+        # --- hud & status bar ---
+        status_text = f" [F] ROUTE  [J] JUMP  [C] CLEAR  [Q] QUIT "
+        if map_data.route_poly:
+            status_text += f"| MODE: {map_data.active_mode} | [X] INST."
+        
+        try:
+            stdscr.attron(curses.color_pair(7))
+            stdscr.addstr(height - 1, 0, status_text)
+            
+            fill_len = width - len(status_text) - 1
+            if fill_len > 0:
+                stdscr.addstr(height - 1, len(status_text), " " * fill_len)
+            stdscr.attroff(curses.color_pair(7))
+        except curses.error:
+            pass
+        
+        # location dispaly
+        with map_data.address_lock:
+            if map_data.current_address:
+                addr_txt = f" {map_data.current_address} "
+                if len(addr_txt) < width - len(status_text) - 2:
+                    try:
+                        # Draw at width - length - 1 (Safety margin)
+                        x_pos = width - len(addr_txt) - 1
+                        stdscr.addstr(height - 1, x_pos, addr_txt, curses.color_pair(7) | curses.A_BOLD)
+                    except curses.error:
+                        pass
+        
+        # crosshair
+        try:
+            stdscr.addstr(height//2, width//2, "+", curses.color_pair(4) | curses.A_BOLD)
+        except: pass
 
-        hud = f"POS: {cam_x:.4f}, {cam_y:.4f} | ZOOM: {zoom:.1f}x | FPS: {fps} | [f] Route | [j] Jump | [c] Clear"
-        stdscr.addstr(0, 0, hud, curses.color_pair(7))
         stdscr.refresh()
 
         # input handling
@@ -339,7 +402,6 @@ def main(stdscr):
         elif k in [ord('='), 43]: zoom *= 1.2
         elif k in [ord('-'), 95]: zoom /= 1.2
         
-        # mouse handling
         elif k == curses.KEY_MOUSE:
             try:
                 _, mx, my, _, bstate = curses.getmouse()
@@ -348,22 +410,20 @@ def main(stdscr):
                     cam_x, cam_y = w_mx, w_my
             except: pass
 
-        # paging controls with cycling
         elif k == ord('p') or k == ord('P'): 
             if total_pages > 1:
-                # loop back
                 instruction_page = (instruction_page + 1) % total_pages
                 
         elif k == ord('x') or k == ord('X'):
-            show_instructions = False
-        
+            show_instructions = not show_instructions
+
         # jump to address
         elif k == ord('j'):
             stdscr.timeout(-1)
-            target = text_input(stdscr, height-4, 2, "Jump to: ")
+            target = text_input(stdscr, height//2 - 2, width//2 - 15, "Jump to: ")
             
             if target:
-                stdscr.addstr(height-2, 2, "Geocoding...", curses.color_pair(5))
+                stdscr.addstr(height//2, width//2 - 15, "Geocoding...", curses.color_pair(5))
                 stdscr.refresh()
                 
                 coord = routing.geocode_address(target)
@@ -371,81 +431,86 @@ def main(stdscr):
                     mx, my = mercator_project(coord[1], coord[0])
                     cam_x, cam_y = mx, my
                     if zoom < 500: zoom = 2000.0
-                    stdscr.addstr(height-2, 2, f"Moved to {target}", curses.color_pair(2))
                 else:
-                    stdscr.addstr(height-2, 2, "Address not found!", curses.color_pair(4))
-                stdscr.getch() 
+                    stdscr.addstr(height//2, width//2 - 15, "Not found!", curses.color_pair(4))
+                    stdscr.getch() 
             
             stdscr.timeout(33)
 
-        #### routing menu
+        #### improved routing menu
         elif k == ord('f'): 
             stdscr.timeout(-1) 
             
-            start_addr = text_input(stdscr, height-4, 2, "Start Addr: ")
-            end_addr = text_input(stdscr, height-3, 2, "End Addr:   ")
+            start_addr = text_input(stdscr, height//2 - 2, width//2 - 15, "Start: ")
+            if not start_addr: 
+                stdscr.timeout(33)
+                continue
+                
+            end_addr = text_input(stdscr, height//2, width//2 - 15, "End:   ")
+            if not end_addr:
+                stdscr.timeout(33)
+                continue
             
-            stdscr.addstr(height-2, 2, "Geocoding...", curses.color_pair(5))
-            stdscr.refresh()
+            # popout menu
+            sel_idx = draw_menu(stdscr, "Transport Mode", routing_names)
             
-            s_coord = routing.geocode_address(start_addr)
-            e_coord = routing.geocode_address(end_addr)
-            
-            if s_coord and e_coord:
-                stdscr.addstr(height-2, 2, "Routing...  ", curses.color_pair(5))
+            if sel_idx is not None:
+                selected_profile = routing_profiles[sel_idx]
+                
+                stdscr.addstr(height-2, 2, "Routing...", curses.color_pair(5))
                 stdscr.refresh()
                 
-                route_pts, instructions = routing.get_route(s_coord[0], s_coord[1], e_coord[0], e_coord[1])
+                s_coord = routing.geocode_address(start_addr)
+                e_coord = routing.geocode_address(end_addr)
                 
-                if route_pts:
-                    map_data.start_marker = mercator_project(s_coord[1], s_coord[0])
-                    map_data.end_marker = mercator_project(e_coord[1], e_coord[0])
+                if s_coord and e_coord:
+                    route_pts, instructions = routing.get_route(
+                        s_coord[0], s_coord[1], 
+                        e_coord[0], e_coord[1],
+                        selected_profile
+                    )
                     
-                    projected_route = []
-                    for lon, lat in route_pts:
-                        projected_route.append(mercator_project(lat, lon))
-                    
-                    map_data.route_poly = projected_route
-                    map_data.route_instructions = instructions
-                    
-                    # reset UI for new route
-                    instruction_page = 0
-                    show_instructions = True 
-                    
-                    # autozoom
-                    xs = [p[0] for p in projected_route]
-                    ys = [p[1] for p in projected_route]
-                    
-                    min_x, max_x = min(xs), max(xs)
-                    min_y, max_y = min(ys), max(ys)
-                    cam_x = (min_x + max_x) / 2
-                    cam_y = (min_y + max_y) / 2
-                    route_w = max_x - min_x
-                    route_h = max_y - min_y
-                    if route_w == 0: route_w = 0.01
-                    if route_h == 0: route_h = 0.01
-
-                    zoom_w = (width / aspect_ratio) / (route_w * 1.5)
-                    zoom_h = height / (route_h * 1.5)
-                    zoom = min(zoom_w, zoom_h)
-
+                    if route_pts:
+                        map_data.start_marker = mercator_project(s_coord[1], s_coord[0])
+                        map_data.end_marker = mercator_project(e_coord[1], e_coord[0])
+                        
+                        projected_route = []
+                        for lon, lat in route_pts:
+                            projected_route.append(mercator_project(lat, lon))
+                        
+                        map_data.route_poly = projected_route
+                        map_data.route_instructions = instructions
+                        map_data.active_mode = routing_names[sel_idx].upper()
+                        
+                        instruction_page = 0
+                        show_instructions = True 
+                        
+                        # fit view
+                        xs = [p[0] for p in projected_route]
+                        ys = [p[1] for p in projected_route]
+                        cam_x = (min(xs) + max(xs)) / 2
+                        cam_y = (min(ys) + max(ys)) / 2
+                        
+                        route_w = max(0.01, max(xs) - min(xs))
+                        route_h = max(0.01, max(ys) - min(ys))
+                        zoom = min((width / aspect_ratio) / (route_w * 1.5), height / (route_h * 1.5))
+                    else:
+                        stdscr.addstr(height-2, 2, "No route found!", curses.color_pair(4))
+                        stdscr.getch()
                 else:
-                    stdscr.addstr(height-2, 2, "Route Failed!", curses.color_pair(4))
+                    stdscr.addstr(height-2, 2, "Address failed!", curses.color_pair(4))
                     stdscr.getch()
-            else:
-                stdscr.addstr(height-2, 2, "Address not found!", curses.color_pair(4))
-                stdscr.getch()
                 
             stdscr.timeout(33)
             
         elif k == ord('c'):
-            # complete clear
             map_data.route_poly = []
             map_data.route_instructions = []
             show_instructions = False
             instruction_page = 0
             map_data.start_marker = None
             map_data.end_marker = None
+            map_data.active_mode = "VIEW"
 
     map_data.shutdown()
     curses.endwin()
