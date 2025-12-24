@@ -3,6 +3,53 @@ import math
 
 mercator_const = 85.051129
 
+class LabelManager:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.occupied = [] # list of (x, y, w, h)
+
+    def can_draw(self, x, y, text_len):
+        # simple bounding box check
+        # padding of 1 char around
+        x1, y1 = x - 1, y - 1
+        x2, y2 = x + text_len + 1, y + 1
+        
+        # screen bounds
+        if x1 < 0 or y1 < 0 or x2 >= self.width or y2 >= self.height:
+            return False
+
+        for (ox, oy, ow, oh) in self.occupied:
+            # check intersection
+            if not (x2 < ox or x1 > ox + ow or y2 < oy or y1 > oy + oh):
+                return False # overlap
+        
+        return True
+
+    def register(self, x, y, text_len):
+        self.occupied.append((x, y, text_len, 1))
+
+
+def draw_progress_bar(stdscr, y, x, width, percent, message):
+    bar_width = width - 4
+    filled = int(bar_width * (percent / 100.0))
+    bar = "[" + "#" * filled + "." * (bar_width - filled) + "]"
+    stdscr.addstr(y, x, message, curses.color_pair(3))
+    stdscr.addstr(y + 1, x, bar, curses.color_pair(6))
+
+def text_input(stdscr, y, x, prompt):
+    curses.echo()
+    curses.curs_set(1)
+    stdscr.addstr(y, x, prompt, curses.color_pair(3) | curses.A_BOLD)
+    stdscr.refresh()
+    
+    # Read bytes and decode
+    inp = stdscr.getstr(y, x + len(prompt), 30)
+    
+    curses.noecho()
+    curses.curs_set(0)
+    return inp.decode('utf-8')
+
 def mercator_project(lat, lon):
     # clip
     if lat > mercator_const: lat = mercator_const
@@ -297,39 +344,3 @@ def simplify_polyline(coords_mx_my, tolerance_mx_my):
         simplified.append(coords_mx_my[-1])
         
     return simplified
-
-
-# simplifcaiton helper for countries
-def draw_country_poly(stdscr, poly_coords, cam_x, cam_y, zoom, aspect_ratio, width, height, color, simplify_tolerance=0.0):
-    coords_to_draw = poly_coords
-    # tolerance
-    if simplify_tolerance > 0.0:
-        coords_to_draw = simplify_polyline(poly_coords, simplify_tolerance)
-        
-    screen_points = []
-    cx, cy = width // 2, height // 2
-    for mx, my in coords_to_draw:
-        tx = mx - cam_x
-        ty = my - cam_y
-        sx = (tx * zoom * aspect_ratio) + cx
-        sy = (-ty * zoom) + cy
-        screen_points.append((int(sx), int(sy)))
-        
-    # draw lines loop
-    for i in range(len(screen_points) - 1):
-        p1 = screen_points[i]
-        p2 = screen_points[i+1]
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        char = get_line_char(dx, dy)
-        
-        draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | color)
-    
-    # close loop
-    if screen_points:
-        p1 = screen_points[-1]
-        p2 = screen_points[0]
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        char = get_line_char(dx, dy)
-        draw_line(stdscr, p1[0], p1[1], p2[0], p2[1], char | color)

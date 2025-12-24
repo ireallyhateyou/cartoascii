@@ -1,5 +1,7 @@
-overpy
-osmnx
+numpy
+requests
+mapbox-vector-tile
 shapely
+geopandas
 pandas
-mapbox_vector_tile
+windows-curses

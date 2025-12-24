@@ -42,9 +42,27 @@ def get_route(start_lon, start_lat, end_lon, end_lat):
         r = requests.post(url, json=body, headers=headers, timeout=5)
         r.raise_for_status()
         data = r.json()
+        
+        geometry = []
+        instructions = []
+
         if 'features' in data and data['features']:
-            return data['features'][0]['geometry']['coordinates']
+            # get the line bits
+            geometry = data['features'][0]['geometry']['coordinates']
+            
+            # try to grab the text bits
+            try:
+                # openrouteservice structure is usually features -> props -> segments -> steps
+                segments = data['features'][0]['properties']['segments']
+                for seg in segments:
+                    for step in seg['steps']:
+                        instructions.append(step.get('instruction', ''))
+            except:
+                pass
+
+            return geometry, instructions
+
     except Exception as e:
         print(f"route error {e}")
         
-    return []
+    return [], []

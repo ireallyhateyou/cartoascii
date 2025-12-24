@@ -67,6 +67,7 @@ class mapData:
         self.start_marker = None 
         self.end_marker = None   
         self.route_poly = []     
+        self.route_instructions = [] # keeping the text here
 
         self.tile_manager = TileManager()
         self.fetch_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -286,7 +287,7 @@ def process_single_tile(z, x, y):
                     new_features.append({
                         'type': 'road', 
                         'class': r_class, 
-                        'name': name,
+                        'name': name, 
                         'coords': coords,
                         'bbox': bbox
                     })
@@ -321,19 +322,51 @@ def process_single_tile(z, x, y):
                             'bbox': bbox
                         })
     
-    # labels
+    # 1. Place Layer (Cities, Towns, etc)
     if 'place' in raw:
         for f in raw['place']['features']:
             if f['geometry']['type'] == 'Point':
-                name = sanitize_label(f['properties'])
+                props = f['properties']
+                cls = props.get('class', '')
+                
+                # filter out suburbs/neighborhoods unless zoomed in deep (not handled here but good practice)
+                if cls in ['neighbourhood', 'suburb', 'block']: continue
+                
+                name = sanitize_label(props)
                 if name:
                     px, py = f['geometry']['coordinates']
                     mx, my = transformer.tile_to_mercator(px, py)
-                    # Point bbox is just the point
                     bbox = (mx, my, mx, my)
                     new_features.append({
                         'type': 'label', 
-                        'name': name, 
+                        'name': name,
+                        'rank': 1, # High priority
+                        'coords': (mx, my),
+                        'bbox': bbox
+                    })
+
+    # 2. POI Layer
+    if 'poi' in raw:
+        # Important categories
+        ALLOWED_POI = ['hospital', 'university', 'college', 'school', 'park', 'stadium', 'town_hall', 'attraction', 'museum']
+        
+        for f in raw['poi']['features']:
+            props = f['properties']
+            cls = props.get('class', '')
+            sub = props.get('subclass', '')
+            rank = props.get('rank', 100) # Default to 100 (low importance)
+            
+            # Filter: Keep if Rank is high (low number) OR it's a critical category
+            if rank <= 10 or cls in ALLOWED_POI or sub in ALLOWED_POI:
+                name = sanitize_label(props)
+                if name:
+                    px, py = f['geometry']['coordinates']
+                    mx, my = transformer.tile_to_mercator(px, py)
+                    bbox = (mx, my, mx, my)
+                    new_features.append({
+                        'type': 'label',
+                        'name': name,
+                        'rank': 10, # Medium priority
                         'coords': (mx, my),
                         'bbox': bbox
                     })
