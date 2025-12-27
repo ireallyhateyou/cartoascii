@@ -108,7 +108,7 @@ def main(stdscr):
         # loading screen
         if not map_data.data_loaded:
             stdscr.erase()
-            msg = f"{map_data.status} {int(map_data.progress)}%"
+            msg = f"{map_data.status} {int(map_data.progress)}% (please be patient!)"
             draw_progress_bar(stdscr, height//2, max(0, width//2 - 20), 40, map_data.progress, msg)
             stdscr.refresh()
             time.sleep(0.05)
@@ -187,9 +187,18 @@ def main(stdscr):
                 
                 lat_min = mercator_unproject(min_cam_y)
                 lat_max = mercator_unproject(max_cam_y)
-                pad_x = (max_cam_x - min_cam_x) * 0.2
                 
-                visible_tiles = tiles_for_bbox(min_cam_x - pad_x, lat_min, max_cam_x + pad_x, lat_max, tile_z)
+                # heavy pre-loading
+                pad_x = (max_cam_x - min_cam_x) * 0.6
+                pad_y_lat = (lat_max - lat_min) * 0.6
+                
+                visible_tiles = tiles_for_bbox(
+                    min_cam_x - pad_x, 
+                    lat_min - pad_y_lat, 
+                    max_cam_x + pad_x, 
+                    lat_max + pad_y_lat, 
+                    tile_z
+                )
                 missing_tiles = []
                 
                 for z, x, y in visible_tiles:
@@ -360,6 +369,9 @@ def main(stdscr):
         if never_moved: 
             status_text += "| [+/-] zoom, arrows to move "
         
+        if map_data.tile_manager.has_pending_downloads():
+            status_text += "| downloading, please be patient!! "
+        
         if map_data.route_poly:
             status_text += f"| mode: {map_data.active_mode.lower()}" 
         
@@ -436,10 +448,10 @@ def main(stdscr):
         # jump to address
         elif k == ord('j'):
             stdscr.timeout(-1)
-            target = text_input(stdscr, height//2 - 2, width//2 - 15, "Jump to: ")
+            target = text_input(stdscr, height//2 - 2, width//2 - 15, "jump to: ")
             
             if target:
-                stdscr.addstr(height//2, width//2 - 15, "Geocoding...", curses.color_pair(5))
+                stdscr.addstr(height//2, width//2 - 15, "geocoding...", curses.color_pair(5))
                 stdscr.refresh()
                 
                 coord = routing.geocode_address(target)
@@ -448,7 +460,7 @@ def main(stdscr):
                     cam_x, cam_y = mx, my
                     if zoom < 500: zoom = 2000.0
                 else:
-                    stdscr.addstr(height//2, width//2 - 15, "Not found!", curses.color_pair(4))
+                    stdscr.addstr(height//2, width//2 - 15, "not found!", curses.color_pair(4))
                     stdscr.getch() 
             
             stdscr.timeout(33)
@@ -457,23 +469,23 @@ def main(stdscr):
         elif k == ord('f'): 
             stdscr.timeout(-1) 
             
-            start_addr = text_input(stdscr, height//2 - 2, width//2 - 15, "Start: ")
+            start_addr = text_input(stdscr, height//2 - 2, width//2 - 15, "start: ")
             if not start_addr: 
                 stdscr.timeout(33)
                 continue
                 
-            end_addr = text_input(stdscr, height//2, width//2 - 15, "End:   ")
+            end_addr = text_input(stdscr, height//2, width//2 - 15, "end:   ")
             if not end_addr:
                 stdscr.timeout(33)
                 continue
             
             # popout menu
-            sel_idx = draw_menu(stdscr, "Transport Mode", routing_names)
+            sel_idx = draw_menu(stdscr, "transport mode", routing_names)
             
             if sel_idx is not None:
                 selected_profile = routing_profiles[sel_idx]
                 
-                stdscr.addstr(height-2, 2, "Routing...", curses.color_pair(5))
+                stdscr.addstr(height-2, 2, "routing...", curses.color_pair(5))
                 stdscr.refresh()
                 
                 s_coord = routing.geocode_address(start_addr)
@@ -511,10 +523,10 @@ def main(stdscr):
                         route_h = max(0.01, max(ys) - min(ys))
                         zoom = min((width / aspect_ratio) / (route_w * 1.5), height / (route_h * 1.5))
                     else:
-                        stdscr.addstr(height-2, 2, "No route found!", curses.color_pair(4))
+                        stdscr.addstr(height-2, 2, "no route found!", curses.color_pair(4))
                         stdscr.getch()
                 else:
-                    stdscr.addstr(height-2, 2, "Address failed!", curses.color_pair(4))
+                    stdscr.addstr(height-2, 2, "address failed!", curses.color_pair(4))
                     stdscr.getch()
                 
             stdscr.timeout(33)

@@ -56,6 +56,10 @@ class TileManager:
         with self.lock:
             self.requested_tiles.add((z, x, y))
 
+    def has_pending_downloads(self):
+        with self.lock:
+            return len(self.requested_tiles) > 0
+
 class mapData:
     def __init__(self):
         self.projected_map_full = []
